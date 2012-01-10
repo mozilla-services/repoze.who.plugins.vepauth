@@ -11,7 +11,7 @@
 # for the specific language governing rights and limitations under the
 # License.
 #
-# The Original Code is repoze.who.plugins.browserid4sync
+# The Original Code is repoze.who.plugins.vepauth
 #
 # The Initial Developer of the Original Code is the Mozilla Foundation.
 # Portions created by the Initial Developer are Copyright (C) 2011
@@ -33,3 +33,26 @@
 # the terms of any one of the MPL, the GPL or the LGPL.
 #
 # ***** END LICENSE BLOCK *****
+
+import unittest2
+import time
+
+from repoze.who.plugins.vepauth.tokenmanager import SignedTokenManager
+
+
+class TestTokens(unittest2.TestCase):
+
+    def test_token_validation(self):
+        manager = SignedTokenManager(timeout=1)
+        token, secret = manager.make_token("tester")
+        # Proper token == valid.
+        self.assertEquals(manager.get_userid(token), "tester")
+        # Bad signature == not valid.
+        bad_token = token[:-1] + "X" if token[-1] == "Z" else "Z"
+        self.assertEquals(manager.get_userid(bad_token), None)
+        # Modified payload == not valid.
+        bad_token = "admin" + token[6:]
+        self.assertEquals(manager.get_userid(bad_token), None)
+        # Expired token == not valid.
+        time.sleep(2)
+        self.assertEquals(manager.get_userid(bad_token), None)

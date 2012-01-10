@@ -11,7 +11,7 @@
 # for the specific language governing rights and limitations under the
 # License.
 #
-# The Original Code is repoze.who.plugins.browserid4sync
+# The Original Code is repoze.who.plugins.vepauth
 #
 # The Initial Developer of the Original Code is the Mozilla Foundation.
 # Portions created by the Initial Developer are Copyright (C) 2011
@@ -35,21 +35,18 @@
 # ***** END LICENSE BLOCK *****
 
 import unittest2
-import json
-import base64
 
-from repoze.who.plugins.browserid4sync.utils import strings_differ
+from zope.interface.verify import verifyClass
+
+from repoze.who.interfaces import IIdentifier, IAuthenticator, IChallenger
+
+from repoze.who.plugins.vepauth import VEPAuthPlugin
 
 
-class TestUtils(unittest2.TestCase):
+class TestVEPAuthPlugin(unittest2.TestCase):
+    """Testcases for the main VEPAuthPlugin class."""
 
-    def test_strings_differ(self):
-        # We can't really test the timing-invariance, but
-        # we can test that we actually compute equality!
-        self.assertTrue(strings_differ("", "a"))
-        self.assertTrue(strings_differ("b", "a"))
-        self.assertTrue(strings_differ("cc", "a"))
-        self.assertTrue(strings_differ("cc", "aa"))
-        self.assertFalse(strings_differ("", ""))
-        self.assertFalse(strings_differ("D", "D"))
-        self.assertFalse(strings_differ("EEE", "EEE"))
+    def test_implements(self):
+        verifyClass(IIdentifier, VEPAuthPlugin)
+        verifyClass(IAuthenticator, VEPAuthPlugin)
+        verifyClass(IChallenger, VEPAuthPlugin)

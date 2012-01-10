@@ -11,7 +11,7 @@
 # for the specific language governing rights and limitations under the
 # License.
 #
-# The Original Code is repoze.who.plugins.browserid4sync
+# The Original Code is repoze.who.plugins.vepauth
 #
 # The Initial Developer of the Original Code is the Mozilla Foundation.
 # Portions created by the Initial Developer are Copyright (C) 2011
@@ -41,7 +41,7 @@ import hmac
 import hashlib
 import base64
 
-from repoze.who.plugins.browserid4sync.utils import strings_differ
+from repoze.who.plugins.vepauth.utils import strings_differ
 
 
 class TokenManager(object):
@@ -121,7 +121,7 @@ class SignedTokenManager(object):
             hashmod = hashlib.sha1
         elif isinstance(hashmod, basestring):
             hashmod = getattr(hashlib, hashmod)
-        self.secret = HKDF_extract("browserid4sync", secret)
+        self.secret = HKDF_extract("vepauth", secret)
         self.timeout = timeout
         self.hashmod = hashmod
         self.hashmod_digest_size = digest_size = hashmod().digest_size
@@ -193,6 +193,8 @@ class SignedTokenManager(object):
 
 def HKDF_extract(salt, IKM, hashmod=hashlib.sha1):
     """HKDF-Extract; see RFC-5869 for the details."""
+    if salt is None:
+        salt = "\x00" * hashmod().digest_size
     return hmac.new(salt, IKM, hashmod).digest()
 
 

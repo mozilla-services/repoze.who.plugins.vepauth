@@ -11,7 +11,7 @@
 # for the specific language governing rights and limitations under the
 # License.
 #
-# The Original Code is repoze.who.plugins.browserid4sync
+# The Original Code is repoze.who.plugins.vepauth
 #
 # The Initial Developer of the Original Code is the Mozilla Foundation.
 # Portions created by the Initial Developer are Copyright (C) 2011
@@ -62,13 +62,13 @@ from repoze.who.utils import resolveDotted
 import vep
 from vep.utils import get_assertion_info
 
-from repoze.who.plugins.browserid4sync.tokenmanager import SignedTokenManager
-from repoze.who.plugins.browserid4sync.utils import (strings_differ,
-                                                     parse_authz_header,
-                                                     NonceCache)
+from repoze.who.plugins.vepauth.tokenmanager import SignedTokenManager
+from repoze.who.plugins.vepauth.utils import (strings_differ,
+                                              parse_authz_header,
+                                              NonceCache)
 
 
-class BrowserID4SyncPlugin(object):
+class VEPAuthPlugin(object):
 
     implements(IIdentifier, IChallenger, IAuthenticator)
 
@@ -325,9 +325,9 @@ class BrowserID4SyncPlugin(object):
 
 def make_plugin(audiences, token_url=None, token_manager=None,
                 verifier=None, **kwds):
-    """Make a BrowserID4SyncPlugin using values from a .ini config file.
+    """Make a VEPAuthPlugin using values from a .ini config file.
 
-    This is a helper function for loading a BrowserID4SyncPlugin via the
+    This is a helper function for loading a VEPAuthPlugin via the
     repoze.who .ini config file system. It converts its arguments from
     strings to the appropriate type then passes them on to the plugin.
     """
@@ -345,6 +345,5 @@ def make_plugin(audiences, token_url=None, token_manager=None,
                 if key.startswith("verifier_"):
                     verifier_kwds[key[len("verifier_"):]] = value
             verifier = verifier(**verifier_kwds)
-    plugin = BrowserID4SyncPlugin(audiences, token_url, token_manager,
-                                  verifier)
+    plugin = VEPAuthPlugin(audiences, token_url, token_manager, verifier)
     return plugin

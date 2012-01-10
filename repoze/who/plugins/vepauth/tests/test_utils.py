@@ -11,7 +11,7 @@
 # for the specific language governing rights and limitations under the
 # License.
 #
-# The Original Code is repoze.who.plugins.browserid4sync
+# The Original Code is repoze.who.plugins.vepauth
 #
 # The Initial Developer of the Original Code is the Mozilla Foundation.
 # Portions created by the Initial Developer are Copyright (C) 2011
@@ -35,24 +35,21 @@
 # ***** END LICENSE BLOCK *****
 
 import unittest2
-import time
+import json
+import base64
 
-from repoze.who.plugins.browserid4sync.tokenmanager import SignedTokenManager
+from repoze.who.plugins.vepauth.utils import strings_differ
 
 
-class TestTokens(unittest2.TestCase):
+class TestUtils(unittest2.TestCase):
 
-    def test_token_validation(self):
-        manager = SignedTokenManager(timeout=1)
-        token, secret = manager.make_token("tester")
-        # Proper token == valid.
-        self.assertEquals(manager.get_userid(token), "tester")
-        # Bad signature == not valid.
-        bad_token = token[:-1] + "X" if token[-1] == "Z" else "Z"
-        self.assertEquals(manager.get_userid(bad_token), None)
-        # Modified payload == not valid.
-        bad_token = "admin" + token[6:]
-        self.assertEquals(manager.get_userid(bad_token), None)
-        # Expired token == not valid.
-        time.sleep(2)
-        self.assertEquals(manager.get_userid(bad_token), None)
+    def test_strings_differ(self):
+        # We can't really test the timing-invariance, but
+        # we can test that we actually compute equality!
+        self.assertTrue(strings_differ("", "a"))
+        self.assertTrue(strings_differ("b", "a"))
+        self.assertTrue(strings_differ("cc", "a"))
+        self.assertTrue(strings_differ("cc", "aa"))
+        self.assertFalse(strings_differ("", ""))
+        self.assertFalse(strings_differ("D", "D"))
+        self.assertFalse(strings_differ("EEE", "EEE"))

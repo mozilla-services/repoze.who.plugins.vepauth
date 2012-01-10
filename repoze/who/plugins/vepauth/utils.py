@@ -11,7 +11,7 @@
 # for the specific language governing rights and limitations under the
 # License.
 #
-# The Original Code is repoze.who.plugins.browserid4sync
+# The Original Code is repoze.who.plugins.vepauth
 #
 # The Initial Developer of the Original Code is the Mozilla Foundation.
 # Portions created by the Initial Developer are Copyright (C) 2011
@@ -35,7 +35,7 @@
 # ***** END LICENSE BLOCK *****
 """
 
-Helper functions for repoze.who.plugins.browserid4sync.
+Helper functions for repoze.who.plugins.vepauth.
 
 """
 

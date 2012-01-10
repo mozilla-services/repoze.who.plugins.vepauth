@@ -12,16 +12,16 @@ with open(os.path.join(here, 'CHANGES.txt')) as f:
 
 requires = ['repoze.who >= 2.0', 'unittest2', 'webtest', 'PyVEP >= 0.2.0']
 
-setup(name='repoze.who.plugins.browserid4sync',
+setup(name='repoze.who.plugins.vepauth',
       version='0.2.1',
-      description='repoze.who.plugins.browserid4sync',
+      description='repoze.who.plugins.vepauth',
       long_description=README + '\n\n' + CHANGES,
       classifiers=[
         "Programming Language :: Python",
         ],
       author='Mozilla Services',
       author_email='services-dev@mozilla.org',
-      url='https://github.com/mozilla-services/repoze.who.plugins.browserid4sync',
+      url='https://github.com/mozilla-services/repoze.who.plugins.vepauth',
       keywords='authentication repoze browserid oauth',
       packages=find_packages(),
       include_package_data=True,
@@ -29,4 +29,4 @@ setup(name='repoze.who.plugins.browserid4sync',
       install_requires=requires,
       tests_require=requires,
       namespace_packages=['repoze', 'repoze.who', 'repoze.who.plugins'],
-      test_suite="repoze.who.plugins.browserid4sync")
+      test_suite="repoze.who.plugins.vepauth")

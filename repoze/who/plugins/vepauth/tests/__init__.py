@@ -11,7 +11,7 @@
 # for the specific language governing rights and limitations under the
 # License.
 #
-# The Original Code is repoze.who.plugins.browserid4sync
+# The Original Code is repoze.who.plugins.vepauth
 #
 # The Initial Developer of the Original Code is the Mozilla Foundation.
 # Portions created by the Initial Developer are Copyright (C) 2011
@@ -33,20 +33,3 @@
 # the terms of any one of the MPL, the GPL or the LGPL.
 #
 # ***** END LICENSE BLOCK *****
-
-import unittest2
-
-from zope.interface.verify import verifyClass
-
-from repoze.who.interfaces import IIdentifier, IAuthenticator, IChallenger
-
-from repoze.who.plugins.browserid4sync import BrowserID4SyncPlugin
-
-
-class TestBrowserID4SyncPlugin(unittest2.TestCase):
-    """Testcases for the main BrowserID4SyncPlugin class."""
-
-    def test_implements(self):
-        verifyClass(IIdentifier, BrowserID4SyncPlugin)
-        verifyClass(IAuthenticator, BrowserID4SyncPlugin)
-        verifyClass(IChallenger, BrowserID4SyncPlugin)
