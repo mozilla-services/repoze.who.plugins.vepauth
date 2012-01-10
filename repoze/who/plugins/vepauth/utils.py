@@ -39,112 +39,12 @@ Helper functions for repoze.who.plugins.vepauth.
 
 """
 
-import threading
-import heapq
-
-
-def strings_differ(string1, string2):
-    """Check whether two strings differ while avoiding timing attacks.
-
-    This function returns True if the given strings differ and False
-    if they are equal.  It's careful not to leak information about *where*
-    they differ as a result of its running time, which can be very important
-    to avoid certain timing-related crypto attacks:
-
-        http://seb.dbzteam.org/crypto/python-oauth-timing-hmac.pdf
-
-    """
-    if len(string1) != len(string2):
-        return True
-    invalid_bits = 0
-    for a, b in zip(string1, string2):
-        invalid_bits += a != b
-    return invalid_bits != 0
-
-
-class NonceCache(object):
-    """Object for managing a short-lived cache of nonce values.
-
-    This class allow easy management of client-generated nonces.  It keeps
-    a set of seen nonce values so that they can be looked up quickly, and
-    a queue ordering them by timestamp so that they can be purged when
-    they expire.
-    """
-
-    def __init__(self, timeout=None):
-        if timeout is None:
-            timeout = 5 * 60
-        self.timeout = timeout
-        self.nonces = set()
-        self.purge_lock = threading.Lock()
-        self.purge_queue = []
-
-    def __contains__(self, nonce):
-        """Check if the given nonce is in the cache."""
-        return (nonce in self.nonces)
-
-    def add(self, nonce, timestamp):
-        """Add the given nonce to the cache."""
-        with self.purge_lock:
-            # Purge a few expired nonces to make room.
-            # Don't purge *all* of them, since we don't want to pause too long.
-            purge_deadline = time.time() - self.timeout
-            try:
-                for _ in xrange(5):
-                    (old_timestamp, old_nonce) = self.purge_queue[0]
-                    if old_timestamp >= purge_deadline:
-                        break
-                    self.nonces.remove(old_nonce)
-                    heapq.heappop(self.purge_queue)
-            except (IndexError, KeyError):
-                pass
-            # Add the new nonce into queue and map.
-            heapq.heappush(self.purge_queue, (timestamp, nonce))
-            self.nonces.add(nonce)
-# ***** BEGIN LICENSE BLOCK *****
-# Version: MPL 1.1/GPL 2.0/LGPL 2.1
-#
-# The contents of this file are subject to the Mozilla Public License Version
-# 1.1 (the "License"); you may not use this file except in compliance with
-# the License. You may obtain a copy of the License at
-# http://www.mozilla.org/MPL/
-#
-# Software distributed under the License is distributed on an "AS IS" basis,
-# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
-# for the specific language governing rights and limitations under the
-# License.
-#
-# The Original Code is Sauropod.
-#
-# The Initial Developer of the Original Code is the Mozilla Foundation.
-# Portions created by the Initial Developer are Copyright (C) 2011
-# the Initial Developer. All Rights Reserved.
-#
-# Contributor(s):
-#   Ryan Kelly (rkelly@mozilla.com)
-#
-# Alternatively, the contents of this file may be used under the terms of
-# either the GNU General Public License Version 2 or later (the "GPL"), or
-# the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
-# in which case the provisions of the GPL or the LGPL are applicable instead
-# of those above. If you wish to allow use of your version of this file only
-# under the terms of either the GPL or the LGPL, and not to allow others to
-# use your version of this file under the terms of the MPL, indicate your
-# decision by deleting the provisions above and replace them with the notice
-# and other provisions required by the GPL or the LGPL. If you do not delete
-# the provisions above, a recipient may use your version of this file under
-# the terms of any one of the MPL, the GPL or the LGPL.
-#
-# ***** END LICENSE BLOCK *****
-"""
-
-Helper functions for minimal sauropod server.
-
-"""
-
 import re
+import time
 import json
+import heapq
 import urllib2
+import threading
 
 
 # Regular expression matching a single param in the HTTP_AUTHORIZATION header.
@@ -217,3 +117,72 @@ def parse_authz_header(request, *default):
             value = _ESCAPED_CHAR.sub(lambda m: m.group(0)[1], value)
         params[key] = value
     return params
+
+
+def strings_differ(string1, string2):
+    """Check whether two strings differ while avoiding timing attacks.
+
+    This function returns True if the given strings differ and False
+    if they are equal.  It's careful not to leak information about *where*
+    they differ as a result of its running time, which can be very important
+    to avoid certain timing-related crypto attacks:
+
+        http://seb.dbzteam.org/crypto/python-oauth-timing-hmac.pdf
+
+    """
+    if len(string1) != len(string2):
+        return True
+    invalid_bits = 0
+    for a, b in zip(string1, string2):
+        invalid_bits += a != b
+    return invalid_bits != 0
+
+
+class NonceCache(object):
+    """Object for managing a short-lived cache of nonce values.
+
+    This class allow easy management of client-generated nonces.  It keeps
+    a set of seen nonce values so that they can be looked up quickly, and
+    a queue ordering them by timestamp so that they can be purged when
+    they expire.
+    """
+
+    def __init__(self, timeout=None):
+        if timeout is None:
+            timeout = 5 * 60
+        self.timeout = timeout
+        self.nonce_timestamps = {}
+        self.purge_lock = threading.Lock()
+        self.purge_queue = []
+
+    def __contains__(self, nonce):
+        """Check if the given nonce is in the cache."""
+        timestamp = self.nonce_timestamps.get(nonce)
+        if timestamp is None:
+            return False
+        if timestamp + self.timeout < time.time():
+            return False
+        return True
+
+    def __len__(self):
+        """Get the number of items currently in the cache."""
+        return len(self.nonce_timestamps)
+
+    def add(self, nonce, timestamp):
+        """Add the given nonce to the cache."""
+        with self.purge_lock:
+            # Purge a few expired nonces to make room.
+            # Don't purge *all* of them, since we don't want to pause too long.
+            purge_deadline = time.time() - self.timeout
+            try:
+                for _ in xrange(5):
+                    (old_timestamp, old_nonce) = self.purge_queue[0]
+                    if old_timestamp >= purge_deadline:
+                        break
+                    heapq.heappop(self.purge_queue)
+                    del self.nonce_timestamps[old_nonce]
+            except (IndexError, KeyError):
+                pass
+            # Add the new nonce into both queue and map.
+            heapq.heappush(self.purge_queue, (timestamp, nonce))
+            self.nonce_timestamps[nonce] = timestamp

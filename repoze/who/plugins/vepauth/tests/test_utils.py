@@ -35,10 +35,13 @@
 # ***** END LICENSE BLOCK *****
 
 import unittest2
+import time
 import json
 import base64
 
-from repoze.who.plugins.vepauth.utils import strings_differ
+from repoze.who.plugins.vepauth.utils import (strings_differ,
+                                              NonceCache,
+                                              parse_authz_header)
 
 
 class TestUtils(unittest2.TestCase):
@@ -53,3 +56,79 @@ class TestUtils(unittest2.TestCase):
         self.assertFalse(strings_differ("", ""))
         self.assertFalse(strings_differ("D", "D"))
         self.assertFalse(strings_differ("EEE", "EEE"))
+
+    def test_nonce_cache(self):
+        timeout = 0.1
+
+        # The cache should be empty to start with.
+        cache = NonceCache(timeout=timeout)
+        self.assertEquals(len(cache), 0)
+        self.assertFalse("abc" in cache)
+        # After adding a nonce, it should contain just that item.
+        cache.add("abc", time.time())
+        self.assertEquals(len(cache), 1)
+        self.assertTrue("abc" in cache)
+        self.assertFalse("def" in cache)
+        # After the timeout passes, the item should be expired.
+        time.sleep(timeout)
+        self.assertFalse("abc" in cache)
+        # Writing to the cache purges expired nonces but keeps valid ones.
+        cache.add("abc", time.time())
+        time.sleep(timeout/2)
+        cache.add("def", time.time())
+        self.assertTrue("abc" in cache)
+        self.assertTrue("def" in cache)
+        self.assertFalse("xyz" in cache)
+        time.sleep(timeout/2)
+        cache.add("xyz", time.time())
+        self.assertFalse("abc" in cache)
+        self.assertTrue("def" in cache)
+        self.assertTrue("xyz" in cache)
+        self.assertEquals(len(cache), 2)
+
+    def test_parse_authz_header(self):
+        def req(authz):
+            """Make a fake request with the given authz header."""
+            class request:
+                environ = {"HTTP_AUTHORIZATION": authz}
+            return request
+
+        # Test parsing of a single unquoted parameter.
+        params = parse_authz_header(req('Digest realm=hello'))
+        self.assertEquals(params['scheme'], 'Digest')
+        self.assertEquals(params['realm'], 'hello')
+
+        # Test parsing of multiple parameters with mixed quotes.
+        params = parse_authz_header(req('Digest test=one, again="two"'))
+        self.assertEquals(params['scheme'], 'Digest')
+        self.assertEquals(params['test'], 'one')
+        self.assertEquals(params['again'], 'two')
+
+        # Test parsing of an escaped quote and empty string.
+        params = parse_authz_header(req('Digest test="\\"",again=""'))
+        self.assertEquals(params['scheme'], 'Digest')
+        self.assertEquals(params['test'], '"')
+        self.assertEquals(params['again'], '')
+
+        # Test parsing of embedded commas, escaped and non-escaped.
+        params = parse_authz_header(req('Digest one="1\\,2", two="3,4"'))
+        self.assertEquals(params['scheme'], 'Digest')
+        self.assertEquals(params['one'], '1,2')
+        self.assertEquals(params['two'], '3,4')
+
+        # Test parsing on various malformed inputs
+        self.assertRaises(ValueError, parse_authz_header, req(""))
+        self.assertRaises(ValueError, parse_authz_header, req(" "))
+        self.assertRaises(ValueError, parse_authz_header,
+                          req('Broken raw-token'))
+        self.assertRaises(ValueError, parse_authz_header,
+                          req('Broken realm="unclosed-quote'))
+        self.assertRaises(ValueError, parse_authz_header,
+                          req('Broken realm=unopened-quote"'))
+        self.assertRaises(ValueError, parse_authz_header,
+                          req('Broken realm="unescaped"quote"'))
+        self.assertRaises(ValueError, parse_authz_header,
+                          req('Broken realm="escaped-end-quote\\"'))
+        self.assertRaises(ValueError, parse_authz_header,
+                          req('Broken realm="duplicated",,what=comma'))
+
