@@ -50,7 +50,7 @@ __version__ = "%d.%d.%d%s" % __ver_tuple__
 
 import re
 import fnmatch
-from urlparse import urlparse
+from urlparse import urljoin
 
 from zope.interface import implements
 
@@ -78,7 +78,7 @@ class VEPAuthPlugin(object):
         # I'm not declaring defaults on the arguments themselves because
         # we would then have to duplicate those defaults into make_plugin.
         if token_url is None:
-            token_url = "/token"
+            token_url = "/request_token"
         if token_manager is None:
             token_manager = SignedTokenManager()
         if verifier is None:
@@ -91,7 +91,6 @@ class VEPAuthPlugin(object):
             audience_patterns = map(self._compile_audience_pattern, audiences)
             self._audience_patterns = audience_patterns
         self.token_url = token_url
-        self.token_path = urlparse(token_url).path
         self.token_manager = token_manager
         self.verifier = verifier
         self.nonce_timeout = nonce_timeout
@@ -101,11 +100,11 @@ class VEPAuthPlugin(object):
         """Extract the authentication info from the request.
 
         If this is a request to the token-provisioning URL then we extract
-        a posted BrowserID session.  Otherwise we extract the OAuth params
-        from the Authorization header.
+        a posted BrowserID assertion and create a new session token.  Otherwise
+        we extract the OAuth params from the Authorization header.
         """
         request = Request(environ)
-        if request.path == self.token_path:
+        if self._is_request_to_token_url(request):
             return self._identify_browserid(request)
         else:
             return self._identify_oauth(request)
@@ -125,7 +124,7 @@ class VEPAuthPlugin(object):
         This simply issues a new WWW-Authenticate challenge, which should
         cause the client to forget any previously-provisioned credentials.
         """
-        challenge = "OAuth+VEP token_url=\"%s\"" % (self.token_url,)
+        challenge = "OAuth+VEP url=\"%s\"" % (self.token_url,)
         return [("WWW-Authenticate", challenge)]
 
     def challenge(self, environ, status, app_headers=(), forget_headers=()):
@@ -155,7 +154,7 @@ class VEPAuthPlugin(object):
         of OAuth credentials.
         """
         request = Request(environ)
-        if request.path == self.token_path:
+        if self._is_request_to_token_url(request):
             return self._authenticate_browserid(request)
         else:
             return self._authenticate_oauth(request)
@@ -178,7 +177,7 @@ class VEPAuthPlugin(object):
         except (ValueError, KeyError):
             return self._do_bad_request(request, "invalid assertion")
         if not self._check_audience(request, audience):
-            msg = "The audience \"%s\" is not recognised" % (audience,)
+            msg = "The audience \"%s\" is not acceptable" % (audience,)
             return self._do_bad_request(request, msg)
         return {
             "browserid.assertion": assertion,
@@ -192,11 +191,12 @@ class VEPAuthPlugin(object):
         # Verify the assertion and find out who they are.
         try:
             data = self.verifier.verify(assertion)
-        except Exception:
-            msg = "Invalid BrowserID assertion"
+        except Exception, e:
+            msg = "Invalid BrowserID assertion: " + str(e)
             return self._do_bad_request(request, msg)
+        identity["repoze.who.userid"] = data["email"]
         # OK, we can go ahead and issue a token.
-        token, secret = self.token_manager.make_token(data["email"])
+        token, secret = self.token_manager.make_token(identity)
         resp = Response()
         resp.status = 200
         resp.content = "oauth_token=%s&oauth_secret=%s" % (token, secret)
@@ -269,11 +269,11 @@ class VEPAuthPlugin(object):
         token = identity.get("oauth_consumer_key")
         if not token:
             return None
-        userid = self.token_manager.get_userid(token)
-        if not userid:
+        try:
+            data, secret = self.token_manager.parse_token(token)
+        except ValueError:
             return None
         # Check the two-legged OAuth signature.
-        secret = self.token_manager.get_secret(token)
         sigdata = self._get_oauth_sigdata(request)
         expected_sig = b64encode(hmac.new(secret, sigdata, sha1).digest())
         if strings_differ(identity["oauth_signature"], expected_sig):
@@ -283,7 +283,9 @@ class VEPAuthPlugin(object):
         nonce = identity["oauth_nonce"]
         timestamp = int(identity["oauth_timestamp"])
         self.nonce_cache.add(nonce, timestamp)
-        return userid
+        # Update the identity with the data from the token.
+        identity.update(data)
+        return identity["repoze.who.userid"]
 
     def _get_oauth_sigdata(self, request):
         """Get the data to be signed for OAuth authentication.
@@ -301,11 +303,13 @@ class VEPAuthPlugin(object):
         uri = uri[:host_len].lower() + uri[host_len:]
         bits.append(uri)
         # The request parameters.
-        # TODO: encoding; TODO: omit oauth_signature;
+        # TODO: encoding;
         params = request.GET.items()
-        params.extend(parse_authz_header(request, {}).items())
         if request.content_type == "application/x-www-form-urlencoded":
             params.extend(request.POST.items())
+        for item in parse_authz_header(request, {}).iteritems():
+            if item[0] not in ("scheme", "oauth_signature"):
+                params.append(item)
         params.sort()
         bits.append("&".join("%s=%s" % (k, v) for k, v in params))
         return "&".join(bits)
@@ -315,35 +319,63 @@ class VEPAuthPlugin(object):
     #
 
     def _do_bad_request(self, request, message="Bad Request"):
-        assert request.path == self.token_url
+        """Generate a "400 Bad Request" error response."""
         error_resp = Response
         error_resp.status = 400
         error_resp.content = message
         request.environ["repoze.who.application"] = error_resp
         return None
 
+    def _is_request_to_token_url(self, request):
+        """Check if given request is to the token-provisioning URL."""
+        request_url =  urljoin(request.host_url, request.path)
+        return request_url == urljoin(request.host_url, self.token_url)
 
-def make_plugin(audiences, token_url=None, token_manager=None,
-                verifier=None, **kwds):
+
+def make_plugin(audiences=None, token_url=None, nonce_timeout=None, **kwds):
     """Make a VEPAuthPlugin using values from a .ini config file.
 
     This is a helper function for loading a VEPAuthPlugin via the
     repoze.who .ini config file system. It converts its arguments from
     strings to the appropriate type then passes them on to the plugin.
     """
+    if audiences is None:
+         raise ValueError('You must specify the "audiences" parameter')
     if not audiences:
         audiences = None
     elif isinstance(audiences, basestring):
         audiences = audiences.split()
-    if isinstance(verifier, basestring):
-        verifier = resolveDotted(verifier)
-        if callable(verifier):
-            verifier_kwds = {}
-            for key, value in kwds.iteritems():
-                if key == "verifier_urlopen":
-                    value = resolveDotted(value)
-                if key.startswith("verifier_"):
-                    verifier_kwds[key[len("verifier_"):]] = value
-            verifier = verifier(**verifier_kwds)
-    plugin = VEPAuthPlugin(audiences, token_url, token_manager, verifier)
+    token_manager = _load_from_callable("token_manager", kwds)
+    verifier = _load_from_callable("verifier", kwds)
+    for unknown_kwd in kwds:
+        raise TypeError("unknown keyword argument: %s" % (unknown_kwd,))
+    plugin = VEPAuthPlugin(audiences, token_url, token_manager, verifier,
+                           nonce_timeout)
     return plugin
+
+
+def _load_from_callable(name, kwds, converters={}):
+    """Load a plugin argument from dotted python name of callable.
+
+    This function is a helper to load and possibly instantiate an argument
+    to the plugin.  It grabs the value from the dotted python name kwds[name].
+    If this is a callable, it it looks for arguments of the form kwds[name_*]
+    and calls the object with them.
+    """
+    # See if we actually have the named object.
+    dotted_name = kwds.pop(name, None)
+    if dotted_name is None:
+        return None
+    obj = resolveDotted(dotted_name)
+    # Extract any arguments for the callable.
+    obj_kwds = {}
+    prefix = name+"_"
+    for key in kwds.keys():
+       if key.startswith(prefix):
+            obj_kwds[key[len(prefix):]] = kwds.pop(key)
+    # Call it if callable.
+    if callable(obj):
+        obj = obj(**obj_kwds)
+    elif obj_kwds:
+        raise ValueError("arguments provided for non-callable %r" % (name,))
+    return obj

@@ -43,16 +43,18 @@ from repoze.who.plugins.vepauth.tokenmanager import SignedTokenManager
 class TestTokens(unittest2.TestCase):
 
     def test_token_validation(self):
-        manager = SignedTokenManager(timeout=1)
-        token, secret = manager.make_token("tester")
+        manager = SignedTokenManager(timeout=0.1)
+        token, secret = manager.make_token({"repoze.who.userid":"tester"})
         # Proper token == valid.
-        self.assertEquals(manager.get_userid(token), "tester")
+        data, secret2 = manager.parse_token(token)
+        self.assertEquals(data["repoze.who.userid"], "tester")
+        self.assertEquals(secret, secret2)
         # Bad signature == not valid.
         bad_token = token[:-1] + "X" if token[-1] == "Z" else "Z"
-        self.assertEquals(manager.get_userid(bad_token), None)
+        self.assertRaises(ValueError, manager.parse_token, bad_token)
         # Modified payload == not valid.
         bad_token = "admin" + token[6:]
-        self.assertEquals(manager.get_userid(bad_token), None)
+        self.assertRaises(ValueError, manager.parse_token, bad_token)
         # Expired token == not valid.
-        time.sleep(2)
-        self.assertEquals(manager.get_userid(bad_token), None)
+        time.sleep(0.2)
+        self.assertRaises(ValueError, manager.parse_token, bad_token)
