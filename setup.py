@@ -10,10 +10,10 @@ with open(os.path.join(here, 'README.rst')) as f:
 with open(os.path.join(here, 'CHANGES.txt')) as f:
     CHANGES = f.read()
 
-requires = ['repoze.who >= 2.0', 'unittest2', 'webtest', 'PyVEP >= 0.2.0']
+requires = ['repoze.who >= 2.0', 'unittest2', 'webtest', 'PyVEP >= 0.3.0']
 
 setup(name='repoze.who.plugins.vepauth',
-      version='0.2.1',
+      version='0.1.0',
       description='repoze.who.plugins.vepauth',
       long_description=README + '\n\n' + CHANGES,
       classifiers=[
