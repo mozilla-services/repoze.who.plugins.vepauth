@@ -36,6 +36,7 @@
 
 import unittest2
 import urllib2
+import time
 from cStringIO import StringIO
 
 from webob import Request
@@ -53,7 +54,7 @@ from vep.utils import get_assertion_info
 
 from repoze.who.plugins.vepauth import VEPAuthPlugin, make_plugin
 from repoze.who.plugins.vepauth.tokenmanager import SignedTokenManager
-from repoze.who.plugins.vepauth.utils import sign_request
+from repoze.who.plugins.vepauth.utils import sign_request, parse_authz_header
 
 
 def make_environ(**kwds):
@@ -111,8 +112,7 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         verifyClass(IAuthenticator, VEPAuthPlugin)
         verifyClass(IChallenger, VEPAuthPlugin)
 
-    def test_make_plugin(self):
-        # Test that everything can be set explicitly.
+    def test_make_plugin_can_explicitly_set_all_properties(self):
         plugin = make_plugin(
             audiences="example.com",
             token_url="/test_token_url",
@@ -124,8 +124,9 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         self.assertTrue(isinstance(plugin.verifier, vep.DummyVerifier))
         self.assertTrue(isinstance(plugin.token_manager, vep.LocalVerifier))
         self.assertEquals(plugin.nonce_timeout, 42)
-        # Test that everything gets a sensible default.
-        # Except for "audiences" of course, which you must set explicitly.
+
+    def test_make_plugin_produces_sensible_defaults(self):
+        # The "audiences" parameter must be set explicitly
         self.assertRaises(ValueError, make_plugin)
         plugin = make_plugin("one two")
         self.assertEquals(plugin.audiences, ["one", "two"])
@@ -133,12 +134,28 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         self.assertTrue(isinstance(plugin.verifier, vep.RemoteVerifier))
         self.assertTrue(isinstance(plugin.token_manager, SignedTokenManager))
         self.assertEquals(plugin.nonce_timeout, 5 * 60)
-        # Check setting of urlopen from a dotted-name string.
+
+    def test_make_plugin_loads_urlopen_from_dotted_name(self):
         plugin = make_plugin("one two", verifier="vep:LocalVerifier",
                              verifier_urlopen="urllib2:urlopen")
         self.assertEquals(plugin.audiences, ["one", "two"])
         self.assertTrue(isinstance(plugin.verifier, vep.LocalVerifier))
         self.assertEquals(plugin.verifier.urlopen, urllib2.urlopen)
+
+    def test_make_plugin_treats_empty_audiences_string_as_none(self):
+        plugin = make_plugin("")
+        self.assertEquals(plugin.audiences, None)
+        plugin = make_plugin(" ")
+        self.assertEquals(plugin.audiences, [])
+
+    def test_make_plugin_errors_out_on_unexpected_keyword_args(self):
+        self.assertRaises(TypeError, make_plugin, "",
+                                     unexpected="spanish-inquisition")
+
+    def test_make_plugin_errors_out_on_args_to_a_non_callable(self):
+        self.assertRaises(ValueError, make_plugin, "",
+                                     verifier="vep:__doc__",
+                                     verifier_urlopen="urllib2:urlopen")
 
     def test_checking_for_silly_argument_errors(self):
         self.assertRaises(ValueError, VEPAuthPlugin, audiences="notalist")
@@ -217,3 +234,108 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         req = Request.blank("/")
         sign_request(req, **session)
         r = self.app.request(req)
+        self.assertEquals(r.body, "test@moz.com")
+
+    def test_authentication_with_non_oauth_scheme_fails(self):
+        req = Request.blank("/")
+        req.authorization = "OpenID hello=world"
+        self.app.request(req, status=401)
+
+    def test_authentication_with_plaintext_sig_method_fails(self):
+        body = {"assertion": self._make_assertion("test@moz.com")}
+        session = self.app.post(self.plugin.token_url, body).json
+        req = Request.blank("/")
+        sign_request(req, **session)
+        authz = req.environ["HTTP_AUTHORIZATION"]
+        authz = authz.replace("HMAC-SHA1", "PLAINTEXT")
+        req.environ["HTTP_AUTHORIZATION"] = authz
+        self.app.request(req, status=401)
+
+    def test_authentication_without_consumer_key_fails(self):
+        body = {"assertion": self._make_assertion("test@moz.com")}
+        session = self.app.post(self.plugin.token_url, body).json
+        req = Request.blank("/")
+        sign_request(req, **session)
+        authz = req.environ["HTTP_AUTHORIZATION"]
+        authz = authz.replace("oauth_consumer_key", "oauth_typo_key")
+        req.environ["HTTP_AUTHORIZATION"] = authz
+        self.app.request(req, status=401)
+
+    def test_authentication_without_timestamp_fails(self):
+        body = {"assertion": self._make_assertion("test@moz.com")}
+        session = self.app.post(self.plugin.token_url, body).json
+        req = Request.blank("/")
+        sign_request(req, **session)
+        authz = req.environ["HTTP_AUTHORIZATION"]
+        authz = authz.replace("oauth_timestamp", "oauth_typostamp")
+        req.environ["HTTP_AUTHORIZATION"] = authz
+        self.app.request(req, status=401)
+
+    def test_authentication_without_nonce_fails(self):
+        body = {"assertion": self._make_assertion("test@moz.com")}
+        session = self.app.post(self.plugin.token_url, body).json
+        req = Request.blank("/")
+        sign_request(req, **session)
+        authz = req.environ["HTTP_AUTHORIZATION"]
+        authz = authz.replace("oauth_nonce", "oauth_typonce")
+        req.environ["HTTP_AUTHORIZATION"] = authz
+        self.app.request(req, status=401)
+
+    def test_authentication_with_expired_timestamp_fails(self):
+        body = {"assertion": self._make_assertion("test@moz.com")}
+        session = self.app.post(self.plugin.token_url, body).json
+        req = Request.blank("/")
+        ts = str(int(time.time() - 1000))
+        req.authorization = ("OAuth", {"oauth_timestamp": ts})
+        sign_request(req, **session)
+        self.app.request(req, status=401)
+
+    def test_authentication_with_far_future_timestamp_fails(self):
+        body = {"assertion": self._make_assertion("test@moz.com")}
+        session = self.app.post(self.plugin.token_url, body).json
+        req = Request.blank("/")
+        ts = str(int(time.time() + 1000))
+        req.authorization = ("OAuth", {"oauth_timestamp": ts})
+        sign_request(req, **session)
+        self.app.request(req, status=401)
+
+    def test_authentication_with_reused_nonce_fails(self):
+        body = {"assertion": self._make_assertion("test@moz.com")}
+        session = self.app.post(self.plugin.token_url, body).json
+        # First request with that nonce should succeed.
+        req = Request.blank("/")
+        req.authorization = ("OAuth", {"oauth_nonce": "PEPPER"})
+        sign_request(req, **session)
+        r = self.app.request(req)
+        self.assertEquals(r.body, "test@moz.com")
+        # Second request with that nonce should fail.
+        req = Request.blank("/")
+        req.authorization = ("OAuth", {"oauth_nonce": "PEPPER"})
+        sign_request(req, **session)
+        self.app.request(req, status=401)
+
+    def test_authentication_with_busted_token_fails(self):
+        body = {"assertion": self._make_assertion("test@moz.com")}
+        session = self.app.post(self.plugin.token_url, body).json
+        req = Request.blank("/")
+        sign_request(req, **session)
+        token = parse_authz_header(req)["oauth_consumer_key"]
+        authz = req.environ["HTTP_AUTHORIZATION"]
+        authz = authz.replace(token, "XXX" + token)
+        req.environ["HTTP_AUTHORIZATION"] = authz
+        self.app.request(req, status=401)
+
+    def test_authentication_with_busted_signature_fails(self):
+        body = {"assertion": self._make_assertion("test@moz.com")}
+        session = self.app.post(self.plugin.token_url, body).json
+        req = Request.blank("/")
+        sign_request(req, **session)
+        signature = parse_authz_header(req)["oauth_signature"]
+        authz = req.environ["HTTP_AUTHORIZATION"]
+        authz = authz.replace(signature, "XXX" + signature)
+        req.environ["HTTP_AUTHORIZATION"] = authz
+        self.app.request(req, status=401)
+
+    def test_authenticate_only_accepts_oauth_credentials(self):
+        # Yes, this is a rather pointless test that boosts line coverage...
+        self.assertEquals(self.plugin.authenticate(make_environ(), {}), None)

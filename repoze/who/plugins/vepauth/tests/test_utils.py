@@ -44,6 +44,7 @@ from webob import Request
 from repoze.who.plugins.vepauth.utils import (strings_differ,
                                               NonceCache,
                                               parse_authz_header,
+                                              sign_request,
                                               get_signature_base_string)
 
 
@@ -61,10 +62,13 @@ class TestUtils(unittest2.TestCase):
         self.assertFalse(strings_differ("EEE", "EEE"))
 
     def test_nonce_cache(self):
-        timeout = 0.1
-
+        # The default timeout should be 5 minutes.
+        cache = NonceCache()
+        self.assertEquals(cache.timeout, 5 * 60)
         # The cache should be empty to start with.
+        timeout = 0.1
         cache = NonceCache(timeout=timeout)
+        self.assertEquals(cache.timeout, 0.1)
         self.assertEquals(len(cache), 0)
         self.assertFalse("abc" in cache)
         # After adding a nonce, it should contain just that item.
@@ -120,6 +124,7 @@ class TestUtils(unittest2.TestCase):
         self.assertEquals(params['two'], '3,4')
 
         # Test parsing on various malformed inputs
+        self.assertRaises(ValueError, parse_authz_header, req(None))
         self.assertRaises(ValueError, parse_authz_header, req(""))
         self.assertRaises(ValueError, parse_authz_header, req(" "))
         self.assertRaises(ValueError, parse_authz_header,
@@ -134,6 +139,23 @@ class TestUtils(unittest2.TestCase):
                           req('Broken realm="escaped-end-quote\\"'))
         self.assertRaises(ValueError, parse_authz_header,
                           req('Broken realm="duplicated",,what=comma'))
+
+        # Test all those again, but returning a default value
+        self.assertEquals(None, parse_authz_header(req(None), None))
+        self.assertEquals(None, parse_authz_header(req(""), None))
+        self.assertEquals(None, parse_authz_header(req(" "), None))
+        self.assertEquals(None,
+                          parse_authz_header(req('Broken raw-token'), None))
+        self.assertEquals(None, parse_authz_header(
+                          req('Broken realm="unclosed-quote'), None))
+        self.assertEquals(None, parse_authz_header(
+                          req('Broken realm=unopened-quote"'), None))
+        self.assertEquals(None, parse_authz_header(
+                          req('Broken realm="unescaped"quote"'), None))
+        self.assertEquals(None, parse_authz_header(
+                          req('Broken realm="escaped-end-quote\\"'), None))
+        self.assertEquals(None, parse_authz_header(
+                          req('Broken realm="duplicated",,what=comma'), None))
 
     def test_signature_base_string(self):
         # This is the example used in Section 3.4.1.1 of RFC-5849.
@@ -158,3 +180,9 @@ class TestUtils(unittest2.TestCase):
         # IanB, *thank you* for Request.from_string!
         mysigstr = get_signature_base_string(Request.from_string(req))
         self.assertEquals(sigstr, mysigstr)
+
+    def test_sign_request_throws_away_other_auth_params(self):
+        req = Request.blank("/")
+        req.authorization = ("Digest", {"response": "helloworld"})
+        sign_request(req, "token", "secret")
+        self.assertEquals(req.authorization[0], "OAuth")

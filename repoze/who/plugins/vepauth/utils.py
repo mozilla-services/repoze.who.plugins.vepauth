@@ -84,43 +84,44 @@ def parse_authz_header(request, *default):
          "username": "user1", "response": "123456"}
 
     """
-    # Grab the auth header from the request, if any.
-    authz = request.environ.get("HTTP_AUTHORIZATION")
-    if authz is None:
+    # This outer try-except catches ValueError and
+    # turns it into return-default if necessary.
+    try:
+        # Grab the auth header from the request, if any.
+        authz = request.environ.get("HTTP_AUTHORIZATION")
+        if authz is None:
+            raise ValueError("Missing auth parameters")
+        scheme, kvpairs_str = authz.split(None, 1)
+        # Split the parameters string into individual key=value pairs.
+        # In the simple case we can just split by commas to get each pair.
+        # Unfortunately this will break if one of the values contains a comma.
+        # So if we find a component that isn't a well-formed key=value pair,
+        # then we stitch bits back onto the end of it until it is.
+        kvpairs = []
+        if kvpairs_str:
+            for kvpair in kvpairs_str.split(","):
+                if not kvpairs or _AUTH_PARAM_RE.match(kvpairs[-1]):
+                    kvpairs.append(kvpair)
+                else:
+                    kvpairs[-1] = kvpairs[-1] + "," + kvpair
+            if not _AUTH_PARAM_RE.match(kvpairs[-1]):
+                raise ValueError('Malformed auth parameters')
+        # Now we can just split by the equal-sign to get each key and value.
+        params = {"scheme": scheme}
+        for kvpair in kvpairs:
+            (key, value) = kvpair.strip().split("=", 1)
+            # For quoted strings, remove quotes and backslash-escapes.
+            if value.startswith('"'):
+                value = value[1:-1]
+                if _UNESC_QUOTE_RE.search(value):
+                    raise ValueError("Unescaped quote in quoted-string")
+                value = _ESCAPED_CHAR.sub(lambda m: m.group(0)[1], value)
+            params[key] = value
+        return params
+    except ValueError:
         if default:
             return default[0]
-        raise ValueError("Missing auth parameters")
-    scheme, kvpairs_str = authz.split(None, 1)
-    # Split the parameters string into individual key=value pairs.
-    # In the simple case we can just split by commas to get each pair.
-    # Unfortunately this will break if one of the values contains a comma.
-    # So if we find a component that isn't a well-formed key=value pair,
-    # then we stitch bits back onto the end of it until it is.
-    kvpairs = []
-    if kvpairs_str:
-        for kvpair in kvpairs_str.split(","):
-            if not kvpairs or _AUTH_PARAM_RE.match(kvpairs[-1]):
-                kvpairs.append(kvpair)
-            else:
-                kvpairs[-1] = kvpairs[-1] + "," + kvpair
-        if not _AUTH_PARAM_RE.match(kvpairs[-1]):
-            if default:
-                return default[0]
-            raise ValueError('Malformed auth parameters')
-    # Now we can just split by the equal-sign to get each key and value.
-    params = {"scheme": scheme}
-    for kvpair in kvpairs:
-        (key, value) = kvpair.strip().split("=", 1)
-        # For quoted strings, remove quotes and backslash-escapes.
-        if value.startswith('"'):
-            value = value[1:-1]
-            if _UNESC_QUOTE_RE.search(value):
-                if default:
-                    return default[0]
-                raise ValueError("Unescaped quote in quoted-string")
-            value = _ESCAPED_CHAR.sub(lambda m: m.group(0)[1], value)
-        params[key] = value
-    return params
+        raise
 
 
 def strings_differ(string1, string2):
