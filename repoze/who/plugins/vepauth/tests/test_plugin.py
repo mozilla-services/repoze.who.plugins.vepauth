@@ -35,10 +35,17 @@
 # ***** END LICENSE BLOCK *****
 
 import unittest2
+import urllib2
+from cStringIO import StringIO
+
+from webtest import TestApp
 
 from zope.interface.verify import verifyClass
 
 from repoze.who.interfaces import IIdentifier, IAuthenticator, IChallenger
+from repoze.who.middleware import PluggableAuthenticationMiddleware
+from repoze.who.classifiers import (default_challenge_decider,
+                                    default_request_classifier)
 
 import vep
 from vep.utils import get_assertion_info
@@ -48,6 +55,10 @@ from repoze.who.plugins.vepauth.tokenmanager import SignedTokenManager
 
 
 def make_environ(**kwds):
+    body = kwds.pop("body", None)
+    if body is not None:
+        kwds.setdefault("wsgi.input", StringIO(body))
+        kwds.setdefault("CONTENT_LENGTH", len(body))
     environ = {}
     environ["wsgi.version"] = (1, 0)
     environ["wsgi.url_scheme"] = "http"
@@ -60,25 +71,37 @@ def make_environ(**kwds):
     return environ
 
 
-class DummyVerifierValid(object):
-    """Dummy verifier class that thinks everything is valid."""
-
-    def verify(self, assertion, audience=None):
-        info = get_assertion_info(assertion)
-        return {"status": "okay",
-                "audience": info["audience"],
-                "email": info["principal"]["email"]}
-
-
-class DummyVerifierInvalid(object):
-    """Dummy verifier class that thinks everything is invalid."""
-
-    def verify(self, assertion, audience=None):
-        raise ValueError("Invalid BrowserID assertion")
+def test_application(environ, start_response):
+    """Simple WSGI app that requires authentication."""
+    headers = [("Content-Type", "text/plain")]
+    if "repoze.who.identity" not in environ:
+        start_response("401 Unauthorized", headers)
+        return ["Unauthorized"]
+    start_response("200 OK", headers)
+    return ["OK"]
 
 
 class TestVEPAuthPlugin(unittest2.TestCase):
     """Testcases for the main VEPAuthPlugin class."""
+
+    def setUp(self):
+        self.plugin = VEPAuthPlugin(audiences=["localhost"],
+                                    verifier=vep.DummyVerifier())
+        application = PluggableAuthenticationMiddleware(test_application,
+                                 [["vep", self.plugin]],
+                                 [["vep", self.plugin]],
+                                 [["vep", self.plugin]],
+                                 [],
+                                 default_request_classifier,
+                                 default_challenge_decider)
+        self.app = TestApp(application)
+
+    def _make_assertion(self, address, audience="http://localhost", **kwds):
+        return vep.DummyVerifier.make_assertion(address, audience, **kwds)
+
+    #
+    #  Tests for building a plugin instance.
+    #
 
     def test_implements(self):
         verifyClass(IIdentifier, VEPAuthPlugin)
@@ -92,16 +115,16 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         plugin = make_plugin(
             audiences="example.com",
             token_url="/test_token_url",
-            verifier="repoze.who.plugins.vepauth.tests.test_plugin:DummyVerifierValid",
-            token_manager="repoze.who.plugins.vepauth.tests.test_plugin:DummyVerifierInvalid",
+            verifier="vep:DummyVerifier",
+            token_manager="vep:LocalVerifier",
             nonce_timeout=42)
         self.assertEquals(plugin.audiences, ["example.com"])
         self.assertEquals(plugin.token_url, "/test_token_url")
-        self.assertTrue(isinstance(plugin.verifier, DummyVerifierValid))
-        self.assertTrue(isinstance(plugin.token_manager, DummyVerifierInvalid))
+        self.assertTrue(isinstance(plugin.verifier, vep.DummyVerifier))
+        self.assertTrue(isinstance(plugin.token_manager, vep.LocalVerifier))
         self.assertEquals(plugin.nonce_timeout, 42)
-        # TODO: check setting of urlopen from a dotted-name string.
-        # est that everything gets a sensible default.
+        # Test that everything gets a sensible default.
+        # Except for "audiences" of course, which you must set explicitly.
         self.assertRaises(ValueError, make_plugin)
         plugin = make_plugin("one two")
         self.assertEquals(plugin.audiences, ["one", "two"])
@@ -109,3 +132,73 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         self.assertTrue(isinstance(plugin.verifier, vep.RemoteVerifier))
         self.assertTrue(isinstance(plugin.token_manager, SignedTokenManager))
         self.assertEquals(plugin.nonce_timeout, 5 * 60)
+        # Check setting of urlopen from a dotted-name string.
+        plugin = make_plugin("one two", verifier="vep:LocalVerifier",
+                             verifier_urlopen="urllib2:urlopen")
+        self.assertEquals(plugin.audiences, ["one", "two"])
+        self.assertTrue(isinstance(plugin.verifier, vep.LocalVerifier))
+        self.assertEquals(plugin.verifier.urlopen, urllib2.urlopen)
+
+    def test_checking_for_silly_argument_errors(self):
+        self.assertRaises(ValueError, VEPAuthPlugin, audiences="notalist")
+
+    def test_posting_an_assertion(self):
+        body = {"assertion": self._make_assertion("test@moz.com")}
+        # This fails since we're not at the token-provisioning URL.
+        r = self.app.post("/", body, status=401)
+        # This works since we're at the postback url.
+        r = self.app.post(self.plugin.token_url, body)
+        self.assertTrue("oauth_token" in r.body)
+
+    def test_provisioning_with_no_assertion(self):
+        r = self.app.post(self.plugin.token_url, {}, status=400)
+        self.assertTrue("assertion" in r.body)
+
+    def test_provisioning_with_non_POST_request(self):
+        body = {"assertion": self._make_assertion("test@moz.com")}
+        r = self.app.put(self.plugin.token_url, body, status=400)
+        self.assertTrue("use POST" in r.body)
+
+    def test_provisioning_with_malformed_assertion(self):
+        body = {"assertion": "I AINT NO ASSERTION, FOOL!"}
+        r = self.app.post(self.plugin.token_url, body, status=400)
+        self.assertTrue("assertion" in r.body)
+
+    def test_provisioning_with_untrusted_assertion(self):
+        assertion = self._make_assertion("test@moz", assertion_sig="X")
+        body = {"assertion": assertion}
+        r = self.app.post(self.plugin.token_url, body, status=400)
+        self.assertTrue("assertion" in r.body)
+
+    def test_provisioning_with_invalid_audience(self):
+        assertion = self._make_assertion("test@moz.com", "http://evil.com")
+        body = {"assertion": assertion}
+        r = self.app.post(self.plugin.token_url, body, status=400)
+        self.assertTrue("audience" in r.body)
+        # Setting audiences to None will allow it to pass
+        # if it matches the HTTP_HOST header.
+        self.plugin.audiences = None
+        r = self.app.post(self.plugin.token_url, body, status=400)
+        self.assertTrue("audience" in r.body)
+        r = self.app.post(self.plugin.token_url, body, extra_environ={
+            "HTTP_HOST": "evil.com"
+        })
+        self.assertTrue("oauth_token" in r.body)
+
+    def test_remember_does_nothing(self):
+        self.assertEquals(self.plugin.remember(make_environ(), {}), [])
+
+    def test_forget_gives_a_challenge_header(self):
+        headers = self.plugin.forget(make_environ(), {})
+        self.assertEquals(len(headers), 1)
+        self.assertEquals(headers[0][0], "WWW-Authenticate")
+        self.assertTrue(headers[0][1].startswith("OAuth+VEP "))
+        self.assertTrue(self.plugin.token_url in headers[0][1])
+
+    #
+    #  Tests for IChallenger methods.
+    #
+
+    #
+    #  Tests for IAuthenticator methods.
+    #

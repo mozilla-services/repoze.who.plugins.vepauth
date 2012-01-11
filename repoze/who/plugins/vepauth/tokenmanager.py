@@ -39,7 +39,8 @@ import time
 import math
 import hmac
 import hashlib
-import base64
+from base64 import urlsafe_b64encode as b64encode
+from base64 import urlsafe_b64decode as b64decode
 
 from repoze.who.plugins.vepauth.utils import strings_differ
 
@@ -59,10 +60,10 @@ class TokenManager(object):
     state in memcache so it can be shared by several servers.
     """
 
-    def make_token(self, identity):
+    def make_token(self, data):
         """Generate a new token value.
 
-        This method generates a new token associated with the given identity,
+        This method generates a new token associated with the given VEP data,
         along with a secret key used for signing requests.  These will both
         be unique and non-forgable and contain only characters from the
         urlsafe base64 alphabet.
@@ -127,13 +128,13 @@ class SignedTokenManager(object):
         self._signing_key = okm[:digest_size]
         self._token_key = okm[digest_size:]
 
-    def make_token(self, identity):
+    def make_token(self, data):
         """Generate a new token for the given userid.
 
         In this implementation the token consists of an encoded timestamp, the
         userid, some random bytes, and a HMAC signature to prevent forgery.
         """
-        userid = identity["repoze.who.userid"]
+        userid = b64encode(data["email"].encode("utf8"))
         timestamp = hex(int(time.time() * 10))[2:].rstrip("L")
         nonce = os.urandom(3).encode("hex")
         payload = "%s:%s:%s" % (timestamp, userid, nonce)
@@ -151,6 +152,7 @@ class SignedTokenManager(object):
         # If malformed this will raise ValueError, which is what we want.
         payload, sig = token.rsplit(":", 1)
         timestamp, userid, nonce = payload.split(":", 3)
+        userid = b64decode(userid).decode("utf8")
         expiry_time = (int(timestamp, 16) * 0.1) + self.timeout
         # Check whether it has expired.
         if expiry_time <= time.time():
@@ -174,12 +176,12 @@ class SignedTokenManager(object):
         any extra state in memory while being sufficiently unguessable.
         """
         secret = HKDF_expand(self._token_key, token, self.hashmod_digest_size)
-        return base64.b64encode(secret)
+        return b64encode(secret)
 
     def _get_signature(self, value):
         """Calculate the HMAC signature for the given value."""
         sig = hmac.new(self._signing_key, value, self.hashmod)
-        return base64.b64encode(sig.digest())
+        return b64encode(sig.digest())
 
 
 def HKDF_extract(salt, IKM, hashmod=hashlib.sha1):

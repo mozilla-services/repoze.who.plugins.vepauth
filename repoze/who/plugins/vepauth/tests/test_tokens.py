@@ -43,8 +43,8 @@ from repoze.who.plugins.vepauth.tokenmanager import SignedTokenManager
 class TestTokens(unittest2.TestCase):
 
     def test_token_validation(self):
-        manager = SignedTokenManager(timeout=0.1)
-        token, secret = manager.make_token({"repoze.who.userid":"tester"})
+        manager = SignedTokenManager(timeout=0.2)
+        token, secret = manager.make_token({"email":"tester"})
         # Proper token == valid.
         data, secret2 = manager.parse_token(token)
         self.assertEquals(data["repoze.who.userid"], "tester")
