@@ -38,6 +38,7 @@ import unittest2
 import urllib2
 from cStringIO import StringIO
 
+from webob import Request
 from webtest import TestApp
 
 from zope.interface.verify import verifyClass
@@ -52,13 +53,10 @@ from vep.utils import get_assertion_info
 
 from repoze.who.plugins.vepauth import VEPAuthPlugin, make_plugin
 from repoze.who.plugins.vepauth.tokenmanager import SignedTokenManager
+from repoze.who.plugins.vepauth.utils import sign_request
 
 
 def make_environ(**kwds):
-    body = kwds.pop("body", None)
-    if body is not None:
-        kwds.setdefault("wsgi.input", StringIO(body))
-        kwds.setdefault("CONTENT_LENGTH", len(body))
     environ = {}
     environ["wsgi.version"] = (1, 0)
     environ["wsgi.url_scheme"] = "http"
@@ -74,7 +72,7 @@ def make_environ(**kwds):
 def test_application(environ, start_response):
     """Simple WSGI app that requires authentication.
 
-    This is a simple testing app that returns "200 OK" if the environment
+    This is a simple testing app that returns the userid if the environment
     contains a repoze.who identity, and denies access if it does not. URLs
     containing the string "forbidden" will get a 403 response, while other
     URLs will get a 401 response.
@@ -87,7 +85,7 @@ def test_application(environ, start_response):
             start_response("401 Unauthorized", headers)
         return ["Unauthorized"]
     start_response("200 OK", headers)
-    return ["OK"]
+    return [environ["repoze.who.identity"]["repoze.who.userid"].encode("utf8")]
 
 
 class TestVEPAuthPlugin(unittest2.TestCase):
@@ -115,8 +113,6 @@ class TestVEPAuthPlugin(unittest2.TestCase):
 
     def test_make_plugin(self):
         # Test that everything can be set explicitly.
-        def ref(name):
-            return "repoze.who.plugins.browserid.tests.test_plugin:" + name
         plugin = make_plugin(
             audiences="example.com",
             token_url="/test_token_url",
@@ -217,6 +213,7 @@ class TestVEPAuthPlugin(unittest2.TestCase):
 
     def test_authenticated_request_works(self):
         body = {"assertion": self._make_assertion("test@moz.com")}
-        r = self.app.post(self.plugin.token_url, body)
-        oauth_consumer_key = r.json["oauth_consumer_key"]
-        oauth_consumer_secret = r.json["oauth_consumer_secret"]
+        session = self.app.post(self.plugin.token_url, body).json
+        req = Request.blank("/")
+        sign_request(req, **session)
+        r = self.app.request(req)

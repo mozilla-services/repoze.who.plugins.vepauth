@@ -39,12 +39,16 @@ Helper functions for repoze.who.plugins.vepauth.
 
 """
 
+import os
 import re
 import time
 import json
 import heapq
 import urllib
 import threading
+import hmac
+from hashlib import sha1
+from base64 import b64encode
 
 
 # Regular expression matching a single param in the HTTP_AUTHORIZATION header.
@@ -186,6 +190,49 @@ class NonceCache(object):
             # Add the new nonce into both queue and map.
             heapq.heappush(self.purge_queue, (timestamp, nonce))
             self.nonce_timestamps[nonce] = timestamp
+
+
+def sign_request(request, oauth_consumer_key, oauth_consumer_secret):
+    """Sign the given request using Two-Legged OAuth.
+
+    This function implements the client-side signing algorithm as expected
+    by the server, i.e. Two-Legged OAuth as described in Section 3 of RFC
+    5849.
+
+    It's not used by the repoze.who plugin itself, but is handy for testing
+    purposes and possibly by python client libraries.
+    """
+    if isinstance(oauth_consumer_key, unicode):
+        oauth_consumer_key = oauth_consumer_key.encode("ascii")
+    if isinstance(oauth_consumer_secret, unicode):
+        oauth_consumer_secret = oauth_consumer_secret.encode("ascii")
+    # Use OAuth params from the request if present.
+    # Otherwise generate some fresh ones.
+    params = parse_authz_header(request, {})
+    if params and params.pop("scheme") != "OAuth":
+        params.clear()
+    params["oauth_consumer_key"] = oauth_consumer_key
+    params["oauth_signature_method"] = "HMAC-SHA1"
+    params["oauth_version"] = "1.0"
+    if "oauth_timestamp" not in params:
+        params["oauth_timestamp"] = str(int(time.time()))
+    if "oauth_nonce" not in params:
+        params["oauth_nonce"] = os.urandom(5).encode("hex")
+    # Calculate the signature and add it to the parameters.
+    sigstr = get_signature_base_string(request, params)
+    params["oauth_signature"] = get_signature(sigstr, oauth_consumer_secret)
+    # Serialize the parameters back into the authz header.
+    # WebOb has logic to do this that's not perfect, but good enough for us.
+    request.authorization = ("OAuth", params)
+
+
+def get_signature(sigdata, secret):
+    """Get the OAuth signature for the given data, using the given secret.
+
+    This is straight from Section 3.4 of RFC-5849, using the HMAC-SHA1
+    signature method.
+    """
+    return b64encode(hmac.new(secret, sigdata, sha1).digest())
 
 
 def get_signature_base_string(request, authz=None):

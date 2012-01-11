@@ -155,6 +155,6 @@ class TestUtils(unittest2.TestCase):
                  '2%3D%26oauth_consumer_key%3D9djdj82h48djs9d2%26oauth_non'\
                  'ce%3D7d8f3e4a%26oauth_signature_method%3DHMAC-SHA1%26oau'\
                  'th_timestamp%3D137131201%26oauth_token%3Dkkk9d7dh3k39sjv7'
-        # IanB, *thank you* for Request.from_string in this instance!
-        self.assertEquals(get_signature_base_string(Request.from_string(req)),
-                          sigstr)
+        # IanB, *thank you* for Request.from_string!
+        mysigstr = get_signature_base_string(Request.from_string(req))
+        self.assertEquals(sigstr, mysigstr)

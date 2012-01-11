@@ -50,6 +50,7 @@ __version__ = "%d.%d.%d%s" % __ver_tuple__
 
 import re
 import json
+import time
 import fnmatch
 from urlparse import urljoin
 
@@ -67,6 +68,7 @@ from repoze.who.plugins.vepauth.tokenmanager import SignedTokenManager
 from repoze.who.plugins.vepauth.utils import (strings_differ,
                                               parse_authz_header,
                                               NonceCache,
+                                              get_signature,
                                               get_signature_base_string)
 
 
@@ -162,7 +164,7 @@ class VEPAuthPlugin(object):
         """
         request = Request(environ)
         assert not self._is_request_to_token_url(request)
-        return self._authenticate_oauth(request)
+        return self._authenticate_oauth(request, identity)
 
     #
     #  Methods for exchanging an assertion for an OAuth session token.
@@ -263,7 +265,7 @@ class VEPAuthPlugin(object):
         # OK, they seem like sensible OAuth paramters.
         return params
 
-    def _authenticate_oauth(self, environ, identity):
+    def _authenticate_oauth(self, request, identity):
         # We can only authenticate if it has a valid oauth token.
         token = identity.get("oauth_consumer_key")
         if not token:
@@ -273,8 +275,8 @@ class VEPAuthPlugin(object):
         except ValueError:
             return None
         # Check the two-legged OAuth signature.
-        sigdata = get_signature_base_string(request, params)
-        expected_sig = b64encode(hmac.new(secret, sigdata, sha1).digest())
+        sigdata = get_signature_base_string(request, identity)
+        expected_sig = get_signature(sigdata, secret)
         if strings_differ(identity["oauth_signature"], expected_sig):
             return None
         # Cache the nonce to avoid re-use.
