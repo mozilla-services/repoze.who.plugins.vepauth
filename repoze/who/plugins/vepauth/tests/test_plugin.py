@@ -89,6 +89,16 @@ def test_application(environ, start_response):
     return [environ["repoze.who.identity"]["repoze.who.userid"].encode("utf8")]
 
 
+def test_request_classifier(environ):
+    """Testing request classifier; all requests are are just 'web' requests."""
+    return "web"
+
+
+def test_challenge_decider(environ, status, headers):
+    """Testing challenge decider; 401 and 403 responses get a challenge."""
+    return status.split(None, 1)[0] in ("401", "403")
+
+
 class TestVEPAuthPlugin(unittest2.TestCase):
     """Testcases for the main VEPAuthPlugin class."""
 
@@ -100,8 +110,8 @@ class TestVEPAuthPlugin(unittest2.TestCase):
                                  [["vep", self.plugin]],
                                  [["vep", self.plugin]],
                                  [],
-                                 default_request_classifier,
-                                 default_challenge_decider)
+                                 test_request_classifier,
+                                 test_challenge_decider)
         self.app = TestApp(application)
 
     def _make_assertion(self, address, audience="http://localhost", **kwds):
