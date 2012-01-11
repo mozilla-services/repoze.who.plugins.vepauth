@@ -196,12 +196,12 @@ class NonceCache(object):
 def sign_request(request, oauth_consumer_key, oauth_consumer_secret):
     """Sign the given request using Two-Legged OAuth.
 
-    This function implements the client-side signing algorithm as expected
-    by the server, i.e. Two-Legged OAuth as described in Section 3 of RFC
-    5849.
+    This function implements the client-side request signing algorithm as
+    expected by the server, i.e. Two-Legged OAuth as described in Section 3
+    of RFC 5849.
 
     It's not used by the repoze.who plugin itself, but is handy for testing
-    purposes and possibly by python client libraries.
+    purposes and possibly for python client libraries.
     """
     if isinstance(oauth_consumer_key, unicode):
         oauth_consumer_key = oauth_consumer_key.encode("ascii")

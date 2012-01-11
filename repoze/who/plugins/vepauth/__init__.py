@@ -35,8 +35,19 @@
 # ***** END LICENSE BLOCK *****
 """
 
-A repoze.who plugin for authentication via BrowserID and OAuth signatures.
-It's experimental and designed for use by the next version of Firefox Sync.
+A repoze.who plugin for automated authentication via BrowserID:
+
+    https://browserid.org/
+    https://wiki.mozilla.org/Identity/BrowserIDSync
+
+
+This plugin implements an experimental protocol for authenticating to ReSTful
+web services with the Verified Email Protocol, a.k.a Mozilla's BrowserID
+project.  It is designed for use in automated tools like the Firefox Sync
+Client.  If you're looking for something to use for human visitors on your
+site, please try:
+
+    http://github.com/mozilla-services/repoze.who.plugins.browserid
 
 """
 
@@ -73,6 +84,13 @@ from repoze.who.plugins.vepauth.utils import (strings_differ,
 
 
 class VEPAuthPlugin(object):
+    """Plugin to implement VEP-Auth in Repoze.who.
+
+    This class provides an IIdentifier, IChallenger and IAuthenticator
+    implementation of repoze.who.  Authentication is based on exchanging
+    a VEP assertion for a short-lived session token, which is then used
+    to sign requests using two-legged OAuth.
+    """
 
     implements(IIdentifier, IChallenger, IAuthenticator)
 
@@ -171,6 +189,13 @@ class VEPAuthPlugin(object):
     #
 
     def _process_vep_assertion(self, request): 
+        """Exhange a VEP assertion for some session credentials.
+
+        This  method extracts a POSTed VEP assertion, validates it and
+        establishes a new session token and secret.  These are returned
+        to the user so they can sign subsequent requests as belonging
+        to this session.
+        """
         # You must provision a token using POST.
         if request.method != "POST":
             return self._do_bad_request(request, "must use POST")
@@ -230,7 +255,7 @@ class VEPAuthPlugin(object):
     #
 
     def _identify_oauth(self, request):
-        """Parse, validate and return the request Authorization header.
+        """Parse, validate and return the request's OAuth parameters.
 
         This method grabs the OAuth credentials from the Authorization header
         and performs some sanity-checks.  If the credentials are missing or
