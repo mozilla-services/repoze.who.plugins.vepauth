@@ -43,7 +43,7 @@ import re
 import time
 import json
 import heapq
-import urllib2
+import urllib
 import threading
 
 
@@ -186,3 +186,60 @@ class NonceCache(object):
             # Add the new nonce into both queue and map.
             heapq.heappush(self.purge_queue, (timestamp, nonce))
             self.nonce_timestamps[nonce] = timestamp
+
+
+def get_signature_base_string(request, authz=None):
+    """Get the base string to be signed for OAuth authentication.
+
+    This method takes a WebOb Request object and returns the data that
+    should be signed for OAuth authentication of that request, a.k.a the
+    "signature base string" as defined in section 3.4.1 of RFC-5849.
+
+    If the "authz" parameter is not None, it is assumed to be a pre-parsed
+    dict of parameters from the Authorization header.  If it is missing or
+    None then the Authorization header from the request will be parsed
+    directly.  This should only be used as an optimisation to avoid double
+    parsing of the header.
+    """
+    # The signature base string contains three main components,
+    # percent-encoded and separated by an ampersand.
+    bits = [] 
+    # 1) The request method in upper-case.
+    bits.append(request.method.upper())
+    # 2) The base string URI.
+    # Fortunately WebOb's request.path_url gets us most of the way there.
+    # We just need to twiddle the scheme and host part to be in lowercase.
+    uri = request.path_url
+    host_len = len(request.host_url)
+    uri = uri[:host_len].lower() + uri[host_len:]
+    bits.append(uri)
+    # 3) The request parameters.
+    # Parameters can come from GET vars, POST vars, or the Authz header.
+    # We assume that WebOb has already put them in their decoded form.
+    params = request.GET.items()
+    if request.content_type == "application/x-www-form-urlencoded":
+        params.extend(request.POST.items())
+    if authz is None:
+        authz = parse_authz_header(request, {})
+    for item in authz.iteritems():
+        if item[0] not in ("scheme", "realm", "oauth_signature"):
+            params.append(item)
+    params = [(encode_oauth_parameter(k), encode_oauth_parameter(v))
+              for k, v in params]
+    params.sort()
+    bits.append("&".join("%s=%s" % (k, v) for k, v in params))
+    # Jow encode and join together the the components.
+    # Yes, this double-encodes the parameters.
+    # That's what the spec requires.
+    return "&".join(encode_oauth_parameter(bit) for bit in bits)
+
+
+def encode_oauth_parameter(value):
+    """Percent-encode an oauth parameter name or value.
+
+    This encapsulates the fiddly definitions from Section 3.6 of RFC-5849,
+    to produce a consistent canonical escaped form for any string.
+    """
+    if isinstance(value, unicode):
+        value = value.encode("utf8")
+    return urllib.quote(value, safe="-._~")

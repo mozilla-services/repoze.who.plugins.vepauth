@@ -39,9 +39,12 @@ import time
 import json
 import base64
 
+from webob import Request
+
 from repoze.who.plugins.vepauth.utils import (strings_differ,
                                               NonceCache,
-                                              parse_authz_header)
+                                              parse_authz_header,
+                                              get_signature_base_string)
 
 
 class TestUtils(unittest2.TestCase):
@@ -132,3 +135,26 @@ class TestUtils(unittest2.TestCase):
         self.assertRaises(ValueError, parse_authz_header,
                           req('Broken realm="duplicated",,what=comma'))
 
+    def test_signature_base_string(self):
+        # This is the example used in Section 3.4.1.1 of RFC-5849.
+        req = ""\
+            'POST /request?b5=%3D%253D&a3=a&c%40=&a2=r%20b HTTP/1.1\r\n'\
+            'Host: example.com\r\n'\
+            'Content-Type: application/x-www-form-urlencoded\r\n'\
+            'Authorization: OAuth realm="Example", '\
+                         'oauth_consumer_key="9djdj82h48djs9d2", '\
+                         'oauth_token="kkk9d7dh3k39sjv7", '\
+                         'oauth_signature_method="HMAC-SHA1", '\
+                         'oauth_timestamp="137131201", '\
+                         'oauth_signature="bYT5CMsGcbgUdFHObYMEfcx6bsw%3D", '\
+                         'oauth_nonce="7d8f3e4a"\r\n'\
+            '\r\n'\
+            'c2&a3=2+q'
+        sigstr = 'POST&http%3A%2F%2Fexample.com%2Frequest&a2%3Dr%2520b%26a'\
+                 '3%3D2%2520q%26a3%3Da%26b5%3D%253D%25253D%26c%2540%3D%26c'\
+                 '2%3D%26oauth_consumer_key%3D9djdj82h48djs9d2%26oauth_non'\
+                 'ce%3D7d8f3e4a%26oauth_signature_method%3DHMAC-SHA1%26oau'\
+                 'th_timestamp%3D137131201%26oauth_token%3Dkkk9d7dh3k39sjv7'
+        # IanB, *thank you* for Request.from_string in this instance!
+        self.assertEquals(get_signature_base_string(Request.from_string(req)),
+                          sigstr)

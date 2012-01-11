@@ -49,6 +49,7 @@ __version__ = "%d.%d.%d%s" % __ver_tuple__
 
 
 import re
+import json
 import fnmatch
 from urlparse import urljoin
 
@@ -65,7 +66,8 @@ from vep.utils import get_assertion_info
 from repoze.who.plugins.vepauth.tokenmanager import SignedTokenManager
 from repoze.who.plugins.vepauth.utils import (strings_differ,
                                               parse_authz_header,
-                                              NonceCache)
+                                              NonceCache,
+                                              get_signature_base_string)
 
 
 class VEPAuthPlugin(object):
@@ -192,7 +194,11 @@ class VEPAuthPlugin(object):
         token, secret = self.token_manager.make_token(data)
         resp = Response()
         resp.status = 200
-        resp.body = "oauth_token=%s&oauth_secret=%s" % (token, secret)
+        resp.content_type = "application/json"
+        resp.body = json.dumps({
+            "oauth_consumer_key": token,
+            "oauth_consumer_secret": secret,
+        })
         request.environ["repoze.who.application"] = resp
         return None
 
@@ -267,7 +273,7 @@ class VEPAuthPlugin(object):
         except ValueError:
             return None
         # Check the two-legged OAuth signature.
-        sigdata = self._get_oauth_sigdata(request)
+        sigdata = get_signature_base_string(request, params)
         expected_sig = b64encode(hmac.new(secret, sigdata, sha1).digest())
         if strings_differ(identity["oauth_signature"], expected_sig):
             return None
@@ -279,33 +285,6 @@ class VEPAuthPlugin(object):
         # Update the identity with the data from the token.
         identity.update(data)
         return identity["repoze.who.userid"]
-
-    def _get_oauth_sigdata(self, request):
-        """Get the data to be signed for OAuth authentication.
-
-        This method takes a request object and returns the data that should
-        be signed for OAuth authentication of that request.  This data is the
-        "signature base string" as defined in section 3.4.1 of RFC-5849.
-        """
-        bits = []
-        # The request method in upper-case.
-        bits.append(request.method.upper())
-        # The base string URI. TODO: figure out encoding
-        uri = request.path_url
-        host_len = len(request.host_url)
-        uri = uri[:host_len].lower() + uri[host_len:]
-        bits.append(uri)
-        # The request parameters.
-        # TODO: encoding;
-        params = request.GET.items()
-        if request.content_type == "application/x-www-form-urlencoded":
-            params.extend(request.POST.items())
-        for item in parse_authz_header(request, {}).iteritems():
-            if item[0] not in ("scheme", "oauth_signature"):
-                params.append(item)
-        params.sort()
-        bits.append("&".join("%s=%s" % (k, v) for k, v in params))
-        return "&".join(bits)
 
     #
     #  Misc helper methods.
