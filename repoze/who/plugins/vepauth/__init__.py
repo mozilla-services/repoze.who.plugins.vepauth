@@ -92,9 +92,9 @@ class VEPAuthPlugin(object):
         """Extract the authentication info from the request.
 
         If this is a request to the token-provisioning URL then we extract
-        a posted BrowserID assertion and exchange it for a new session token,
-        setting environ["repoze.who.application"] to pass the details back
-        to the caller.
+        a BrowserID assertion and exchange it for a new session token, setting
+        environ["repoze.who.application"] so we can pass the token details
+        back to the caller.
 
         For all other URLs, we extract the OAuth params from the Authorization
         header and return those as the identity.
@@ -159,18 +159,29 @@ class VEPAuthPlugin(object):
     def _process_vep_assertion(self, request): 
         """Exhange a VEP assertion for some session credentials.
 
-        This  method extracts a POSTed VEP assertion, validates it and
+        This  method extracts a submitted VEP assertion, validates it and
         establishes a new session token and secret.  These are returned
-        to the user so they can sign subsequent requests as belonging
+        to the user so that they can sign subsequent requests as belonging
         to this session.
         """
-        # You must provision a token using POST.
-        if request.method != "POST":
-            return self._do_bad_request(request, "must use POST")
-        # Grab the assertion from the POST body.
-        assertion = request.POST.get("assertion")
-        if assertion is None:
-            return self._do_bad_request(request, "no assertion")
+        # Make sure they're using a GET request.
+        if request.method != "GET":
+            resp = Response()
+            resp.status = 405
+            resp.content_type = "text/plain"
+            resp.body = "token requests must get GET"
+            request.environ["repoze.who.application"] = resp
+            return None
+        # Make sure they're sending an Authorization header.
+        if not request.authorization:
+            challenge_app = self.challenge(request.environ, "401 Unauthorized")
+            request.environ["repoze.who.application"] = challenge_app
+            return None
+        # Grab the assertion from the Authorization header.
+        scheme, assertion = request.authorization
+        if scheme.lower() != "browser-id":
+            msg = "The auth scheme \"%s\" is not supported" % (scheme,)
+            return self._do_bad_request(request, msg.encode("utf8"))
         # Extract the audience, so we can check against wildcards.
         try:
             audience = get_assertion_info(assertion)["audience"]

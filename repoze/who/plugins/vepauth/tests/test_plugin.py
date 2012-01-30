@@ -85,6 +85,13 @@ class TestVEPAuthPlugin(unittest2.TestCase):
     def _make_assertion(self, address, audience="http://localhost", **kwds):
         return vep.DummyVerifier.make_assertion(address, audience, **kwds)
 
+    def _start_session(self, assertion=None):
+        if assertion is None:
+            assertion = self._make_assertion("test@moz.com")
+        headers = {"Authorization": "Browser-ID " + assertion}
+        session = self.app.get(self.plugin.token_url, headers=headers).json
+        return session
+
     def test_implements(self):
         verifyClass(IIdentifier, VEPAuthPlugin)
         verifyClass(IAuthenticator, VEPAuthPlugin)
@@ -162,53 +169,57 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         self.assertTrue(challenge.startswith("OAuth+VEP"))
         self.assertTrue(self.plugin.token_url in challenge)
 
-    def test_posting_an_assertion_creates_a_token(self):
-        body = {"assertion": self._make_assertion("test@moz.com")}
+    def test_sending_an_assertion_creates_a_token(self):
+        authz = "Browser-ID " + self._make_assertion("test@moz.com")
+        headers = {"Authorization": authz}
         # This fails since we're not at the token-provisioning URL.
-        r = self.app.post("/", body, status=401)
+        r = self.app.get("/", headers=headers, status=401)
         self.assertTrue("oauth_consumer_key" not in r.body)
         # This works since we're at the postback url.
-        r = self.app.post(self.plugin.token_url, body)
+        r = self.app.get(self.plugin.token_url, headers=headers)
         self.assertTrue("oauth_consumer_key" in r.body)
 
-    def test_provisioning_with_no_assertion(self):
-        r = self.app.post(self.plugin.token_url, {}, status=400)
-        self.assertTrue("assertion" in r.body)
-
-    def test_provisioning_with_non_POST_request(self):
-        body = {"assertion": self._make_assertion("test@moz.com")}
-        r = self.app.put(self.plugin.token_url, body, status=400)
-        self.assertTrue("use POST" in r.body)
+    def test_non_get_requests_give_405(self):
+        authz = "Browser-ID " + self._make_assertion("test@moz.com")
+        headers = {"Authorization": authz}
+        self.app.post(self.plugin.token_url, headers=headers, status=405)
 
     def test_provisioning_with_malformed_assertion(self):
-        body = {"assertion": "I AINT NO ASSERTION, FOOL!"}
-        r = self.app.post(self.plugin.token_url, body, status=400)
+        authz = "Browser-ID I AINT NO ASSERTION, FOOL!"
+        headers = {"Authorization": authz}
+        r = self.app.get(self.plugin.token_url, headers=headers, status=400)
         self.assertTrue("assertion" in r.body)
+
+    def test_provisioning_with_no_credentials_gives_401(self):
+        headers = {}
+        self.app.get(self.plugin.token_url, headers=headers, status=401)
+
+    def test_provisioning_with_basic_credentials_gives_400(self):
+        headers = {"Authorization": "Basic dTpw"}
+        self.app.get(self.plugin.token_url, headers=headers, status=400)
 
     def test_provisioning_with_untrusted_assertion(self):
         assertion = self._make_assertion("test@moz", assertion_sig="X")
-        body = {"assertion": assertion}
-        r = self.app.post(self.plugin.token_url, body, status=400)
+        headers = {"Authorization": "Browser-ID " + assertion}
+        r = self.app.get(self.plugin.token_url, headers=headers, status=400)
         self.assertTrue("assertion" in r.body)
 
     def test_provisioning_with_invalid_audience(self):
         assertion = self._make_assertion("test@moz.com", "http://evil.com")
-        body = {"assertion": assertion}
-        r = self.app.post(self.plugin.token_url, body, status=400)
+        headers = {"Authorization": "Browser-ID " + assertion}
+        r = self.app.get(self.plugin.token_url, headers=headers, status=400)
         self.assertTrue("audience" in r.body)
         # Setting audiences to None will allow it to pass
         # if it matches the HTTP_HOST header.
         self.plugin.audiences = None
-        r = self.app.post(self.plugin.token_url, body, status=400)
+        r = self.app.get(self.plugin.token_url, headers=headers, status=400)
         self.assertTrue("audience" in r.body)
-        r = self.app.post(self.plugin.token_url, body, extra_environ={
-            "HTTP_HOST": "evil.com"
-        })
+        r = self.app.get(self.plugin.token_url, headers=headers,
+                         extra_environ={"HTTP_HOST": "evil.com"})
         self.assertTrue("oauth_consumer_key" in r.body)
 
     def test_authenticated_request_works(self):
-        body = {"assertion": self._make_assertion("test@moz.com")}
-        session = self.app.post(self.plugin.token_url, body).json
+        session = self._start_session()
         req = Request.blank("/")
         sign_request(req, **session)
         r = self.app.request(req)
@@ -220,8 +231,7 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         self.app.request(req, status=401)
 
     def test_authentication_with_plaintext_sig_method_fails(self):
-        body = {"assertion": self._make_assertion("test@moz.com")}
-        session = self.app.post(self.plugin.token_url, body).json
+        session = self._start_session()
         req = Request.blank("/")
         sign_request(req, **session)
         authz = req.environ["HTTP_AUTHORIZATION"]
@@ -230,8 +240,7 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         self.app.request(req, status=401)
 
     def test_authentication_without_consumer_key_fails(self):
-        body = {"assertion": self._make_assertion("test@moz.com")}
-        session = self.app.post(self.plugin.token_url, body).json
+        session = self._start_session()
         req = Request.blank("/")
         sign_request(req, **session)
         authz = req.environ["HTTP_AUTHORIZATION"]
@@ -240,8 +249,7 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         self.app.request(req, status=401)
 
     def test_authentication_without_timestamp_fails(self):
-        body = {"assertion": self._make_assertion("test@moz.com")}
-        session = self.app.post(self.plugin.token_url, body).json
+        session = self._start_session()
         req = Request.blank("/")
         sign_request(req, **session)
         authz = req.environ["HTTP_AUTHORIZATION"]
@@ -250,8 +258,7 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         self.app.request(req, status=401)
 
     def test_authentication_without_nonce_fails(self):
-        body = {"assertion": self._make_assertion("test@moz.com")}
-        session = self.app.post(self.plugin.token_url, body).json
+        session = self._start_session()
         req = Request.blank("/")
         sign_request(req, **session)
         authz = req.environ["HTTP_AUTHORIZATION"]
@@ -260,8 +267,7 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         self.app.request(req, status=401)
 
     def test_authentication_with_expired_timestamp_fails(self):
-        body = {"assertion": self._make_assertion("test@moz.com")}
-        session = self.app.post(self.plugin.token_url, body).json
+        session = self._start_session()
         req = Request.blank("/")
         ts = str(int(time.time() - 1000))
         req.authorization = ("OAuth", {"oauth_timestamp": ts})
@@ -269,8 +275,7 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         self.app.request(req, status=401)
 
     def test_authentication_with_far_future_timestamp_fails(self):
-        body = {"assertion": self._make_assertion("test@moz.com")}
-        session = self.app.post(self.plugin.token_url, body).json
+        session = self._start_session()
         req = Request.blank("/")
         ts = str(int(time.time() + 1000))
         req.authorization = ("OAuth", {"oauth_timestamp": ts})
@@ -278,8 +283,7 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         self.app.request(req, status=401)
 
     def test_authentication_with_reused_nonce_fails(self):
-        body = {"assertion": self._make_assertion("test@moz.com")}
-        session = self.app.post(self.plugin.token_url, body).json
+        session = self._start_session()
         # First request with that nonce should succeed.
         req = Request.blank("/")
         req.authorization = ("OAuth", {"oauth_nonce": "PEPPER"})
@@ -293,8 +297,7 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         self.app.request(req, status=401)
 
     def test_authentication_with_busted_token_fails(self):
-        body = {"assertion": self._make_assertion("test@moz.com")}
-        session = self.app.post(self.plugin.token_url, body).json
+        session = self._start_session()
         req = Request.blank("/")
         sign_request(req, **session)
         token = parse_authz_header(req)["oauth_consumer_key"]
@@ -304,8 +307,7 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         self.app.request(req, status=401)
 
     def test_authentication_with_busted_signature_fails(self):
-        body = {"assertion": self._make_assertion("test@moz.com")}
-        session = self.app.post(self.plugin.token_url, body).json
+        session = self._start_session()
         req = Request.blank("/")
         sign_request(req, **session)
         signature = parse_authz_header(req)["oauth_signature"]
