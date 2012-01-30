@@ -128,18 +128,15 @@ class VEPAuthPlugin(object):
         This simply sends a 401 response using the WWW-Authenticate field
         as constructed by forget(). 
         """
-        headers = self.forget(environ, {})
-        headers.append(("Content-Type", "text/plain"))
-        headers.extend(app_headers)
-        headers.extend(forget_headers)
-        if not status.startswith("401 "):
-            status = "401 Unauthorized"
-
-        def challenge_app(environ, start_response):
-            start_response(status, headers)
-            return ["Unauthorized"]
-
-        return challenge_app
+        resp = Response()
+        resp.status = 401
+        resp.headers = self.forget(environ, {})
+        for headers in (app_headers, forget_headers):
+            for name, value in headers:
+                resp.headers[name] = value
+        resp.content_type = "text/plain"
+        resp.body = "Unauthorized"
+        return resp
 
     def authenticate(self, environ, identity):
         """Authenticate the extracted identity.
@@ -174,28 +171,27 @@ class VEPAuthPlugin(object):
             return None
         # Make sure they're sending an Authorization header.
         if not request.authorization:
-            challenge_app = self.challenge(request.environ, "401 Unauthorized")
-            request.environ["repoze.who.application"] = challenge_app
-            return None
+            msg = "you must provide an authorization header"
+            return self._respond_unauthorized(request, msg)
         # Grab the assertion from the Authorization header.
         scheme, assertion = request.authorization
         if scheme.lower() != "browser-id":
             msg = "The auth scheme \"%s\" is not supported" % (scheme,)
-            return self._do_bad_request(request, msg.encode("utf8"))
+            return self._respond_bad_request(request, msg.encode("utf8"))
         # Extract the audience, so we can check against wildcards.
         try:
             audience = get_assertion_info(assertion)["audience"]
         except (ValueError, KeyError):
-            return self._do_bad_request(request, "invalid assertion")
+            return self._respond_bad_request(request, "invalid assertion")
         if not self._check_audience(request, audience):
             msg = "The audience \"%s\" is not acceptable" % (audience,)
-            return self._do_bad_request(request, msg.encode("utf8"))
+            return self._respond_bad_request(request, msg.encode("utf8"))
         # Verify the assertion and find out who they are.
         try:
             data = self.verifier.verify(assertion)
         except Exception, e:
             msg = "Invalid BrowserID assertion: " + str(e)
-            return self._do_bad_request(request, msg)
+            return self._respond_bad_request(request, msg)
         # OK, we can go ahead and issue a token.
         token, secret = self.token_manager.make_token(data)
         resp = Response()
@@ -246,26 +242,32 @@ class VEPAuthPlugin(object):
         params = parse_authz_header(request, None)
         if params is None:
             return None
-        # Check that various parameters are as expected.
         if params.get("scheme") != "OAuth":
             return None
+        # Check that various parameters are as expected.
         if params.get("oauth_signature_method") != "HMAC-SHA1":
-            return None
+            msg = "unsupported OAuth signature method"
+            return self._respond_unauthorized(request, msg)
         if "oauth_consumer_key" not in params:
-            return None
+            msg = "missing oauth_consumer_key"
+            return self._respond_unauthorized(request, msg)
         # Check the timestamp, reject if too far from current time.
         try:
             timestamp = int(params["oauth_timestamp"])
         except (KeyError, ValueError):
-            return None
+            msg = "missing or malformed oauth_timestamp"
+            return self._respond_unauthorized(request, msg)
         if abs(timestamp - time.time()) >= self.nonce_timeout:
-            return None
+            msg = "oauth_timestamp is not within accepted range"
+            return self._respond_unauthorized(request, msg)
         # Check that the nonce is not being re-used.
         nonce = params.get("oauth_nonce")
         if nonce is None:
-            return None
+            msg = "missing oauth_nonce"
+            return self._respond_unauthorized(request, msg)
         if nonce in self.nonce_cache:
-            return None
+            msg = "oauth_nonce has already been used"
+            return self._respond_unauthorized(request, msg)
         # OK, they seem like sensible OAuth paramters.
         return params
 
@@ -277,12 +279,14 @@ class VEPAuthPlugin(object):
         try:
             data, secret = self.token_manager.parse_token(token)
         except ValueError:
-            return None
+            msg = "invalid oauth_consumer_key"
+            return self._respond_unauthorized(request, msg)
         # Check the two-legged OAuth signature.
         sigdata = get_signature_base_string(request, identity)
         expected_sig = get_signature(sigdata, secret)
         if strings_differ(identity["oauth_signature"], expected_sig):
-            return None
+            msg = "invalid oauth_signature"
+            return self._respond_unauthorized(request, msg)
         # Cache the nonce to avoid re-use.
         # We do this *after* successul auth to avoid DOS attacks.
         nonce = identity["oauth_nonce"]
@@ -296,12 +300,22 @@ class VEPAuthPlugin(object):
     #  Misc helper methods.
     #
 
-    def _do_bad_request(self, request, message="Bad Request"):
+    def _respond_bad_request(self, request, message="Bad Request"):
         """Generate a "400 Bad Request" error response."""
-        error_resp = Response()
-        error_resp.status = 400
-        error_resp.body = message
-        request.environ["repoze.who.application"] = error_resp
+        resp = Response()
+        resp.status = 400
+        resp.body = message
+        request.environ["repoze.who.application"] = resp
+        return None
+
+    def _respond_unauthorized(self, request, message="Unauthorized"):
+        """Generate a "401 Unauthorized" error response."""
+        resp = Response()
+        resp.status = 401
+        resp.headers = self.forget(request.environ, {})
+        resp.content_type = "text/plain"
+        resp.body = message
+        request.environ["repoze.who.application"] = resp
         return None
 
     def _is_request_to_token_url(self, request):
