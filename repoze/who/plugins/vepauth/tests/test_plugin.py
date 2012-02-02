@@ -38,7 +38,7 @@ def make_environ(**kwds):
     return environ
 
 
-def test_application(environ, start_response):
+def stub_application(environ, start_response):
     """Simple WSGI app that requires authentication.
 
     This is a simple testing app that returns the userid if the environment
@@ -64,12 +64,12 @@ def test_application(environ, start_response):
     return [body]
 
 
-def test_request_classifier(environ):
+def stub_request_classifier(environ):
     """Testing request classifier; all requests are are just 'web' requests."""
     return "web"
 
 
-def test_challenge_decider(environ, status, headers):
+def stub_challenge_decider(environ, status, headers):
     """Testing challenge decider; 401 and 403 responses get a challenge."""
     return status.split(None, 1)[0] in ("401", "403")
 
@@ -80,13 +80,13 @@ class TestVEPAuthPlugin(unittest2.TestCase):
     def setUp(self):
         self.plugin = VEPAuthPlugin(audiences=["localhost"],
                                     verifier=vep.DummyVerifier())
-        application = PluggableAuthenticationMiddleware(test_application,
+        application = PluggableAuthenticationMiddleware(stub_application,
                                  [["vep", self.plugin]],
                                  [["vep", self.plugin]],
                                  [["vep", self.plugin]],
                                  [],
-                                 test_request_classifier,
-                                 test_challenge_decider)
+                                 stub_request_classifier,
+                                 stub_challenge_decider)
         self.app = TestApp(application)
 
     def _make_assertion(self, address, audience="http://localhost", **kwds):
@@ -185,6 +185,15 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         # This works since we're at the postback url.
         r = self.app.get(self.plugin.token_url, headers=headers)
         self.assertTrue("oauth_consumer_key" in r.body)
+
+    def test_that_an_empty_token_url_disables_provisioning(self):
+        authz = "Browser-ID " + self._make_assertion("test@moz.com")
+        headers = {"Authorization": authz}
+        self.plugin.token_url = ""
+        r = self.app.get("/", headers=headers, status=401)
+        self.assertTrue("oauth_consumer_key" not in r.body)
+        r = self.app.get("/request_token", headers=headers, status=401)
+        self.assertTrue("oauth_consumer_key" not in r.body)
 
     def test_non_get_requests_give_405(self):
         authz = "Browser-ID " + self._make_assertion("test@moz.com")

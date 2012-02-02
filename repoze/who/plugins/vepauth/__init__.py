@@ -320,6 +320,8 @@ class VEPAuthPlugin(object):
 
     def _is_request_to_token_url(self, request):
         """Check if given request is to the token-provisioning URL."""
+        if not self.token_url:
+            return False
         request_url =  urljoin(request.host_url, request.path)
         return request_url == urljoin(request.host_url, self.token_url)
 
