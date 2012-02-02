@@ -23,11 +23,18 @@ class TestTokens(unittest2.TestCase):
         # Bad signature == not valid.
         bad_token = token[:-1] + ("X" if token[-1] == "Z" else "Z")
         self.assertRaises(ValueError, manager.parse_token, bad_token)
+        bad_token = ("X"*50).encode("base64").strip()
+        self.assertRaises(ValueError, manager.parse_token, bad_token)
         # Modified payload == not valid.
         bad_token = "admin" + token[6:]
         self.assertRaises(ValueError, manager.parse_token, bad_token)
         # Expired token == not valid.
         time.sleep(0.2)
+        self.assertRaises(ValueError, manager.parse_token, token)
+
+    def test_token_dont_validate_without_a_userid(self):
+        manager = SignedTokenManager()
+        token, secret = manager.make_token({"permissions":"all"})
         self.assertRaises(ValueError, manager.parse_token, token)
 
     def test_loading_hashmod_by_string_name(self):

@@ -5,6 +5,7 @@
 import os
 import time
 import math
+import json
 import hmac
 import hashlib
 from base64 import urlsafe_b64encode as b64encode
@@ -99,41 +100,52 @@ class SignedTokenManager(object):
     def make_token(self, data):
         """Generate a new token for the given userid.
 
-        In this implementation the token consists of an encoded timestamp, the
-        userid, some random bytes, and a HMAC signature to prevent forgery.
+        In this implementation the token is a JSON dump of the given data,
+        including an expiry time and salt.  It has a HMAC signature appended
+        and is b64-encoded for transmission.
         """
-        userid = b64encode(data["email"].encode("utf8"))
-        timestamp = hex(int(time.time() * 10))[2:].rstrip("L")
-        nonce = os.urandom(3).encode("hex")
-        payload = "%s:%s:%s" % (timestamp, userid, nonce)
+        data = data.copy()
+        data["salt"] = os.urandom(3).encode("hex")
+        data["expires"] = time.time() + self.timeout
+        payload = json.dumps(data)
         sig = self._get_signature(payload)
-        token = "%s:%s" % (payload, sig)
+        assert len(sig) == self.hashmod_digest_size
+        token = b64encode(payload + sig)
         return token, self._get_secret(token)
 
     def parse_token(self, token):
         """Extract the data and secret key from the token, if valid.
 
         In this implementation the token is valid is if has a valid signature
-        and if the embedded timestamp is not too far in the past.
+        and if the embedded expiry time has not passed.
         """
-        # Parse the token.
-        # If malformed this will raise ValueError, which is what we want.
-        payload, sig = token.rsplit(":", 1)
-        timestamp, userid, nonce = payload.split(":", 3)
-        userid = b64decode(userid).decode("utf8")
-        expiry_time = (int(timestamp, 16) * 0.1) + self.timeout
-        # Check whether it has expired.
-        if expiry_time <= time.time():
-            raise ValueError("token has expired")
+        # Parse the payload and signature from the token.
+        try:
+            decoded_token = b64decode(token)
+        except TypeError, e:
+            raise ValueError(str(e))
+        payload = decoded_token[:-self.hashmod_digest_size]
+        sig = decoded_token[-self.hashmod_digest_size:]
         # Carefully check the signature.
         # This is a deliberately slow string-compare to avoid timing attacks.
         # Read the docstring of strings_differ for more details.
         expected_sig = self._get_signature(payload)
         if strings_differ(sig, expected_sig):
             raise ValueError("token has invalid signature")
-        # OK, that looks valid.
+        # Only decode *after* we've confirmed the signature.
+        data = json.loads(payload)
+        # Check whether it has expired.
+        if data["expires"] <= time.time():
+            raise ValueError("token has expired")
+        # Find something we can use as repoze.who.userid.
+        if "repoze.who.userid" not in data:
+            for key in ("username", "userid", "uid", "email"):
+                if key in data:
+                    data["repoze.who.userid"] = data[key]
+                    break
+            else:
+                raise ValueError("token contains no userid")
         # Re-generate the secret key and return.
-        data = {"repoze.who.userid": userid}
         return data, self._get_secret(token)
 
     def _get_secret(self, token):
@@ -148,8 +160,7 @@ class SignedTokenManager(object):
 
     def _get_signature(self, value):
         """Calculate the HMAC signature for the given value."""
-        sig = hmac.new(self._signing_key, value, self.hashmod)
-        return b64encode(sig.digest())
+        return hmac.new(self._signing_key, value, self.hashmod).digest()
 
 
 def HKDF_extract(salt, IKM, hashmod=hashlib.sha1):
