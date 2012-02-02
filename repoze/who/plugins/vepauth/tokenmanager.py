@@ -83,19 +83,11 @@ class SignedTokenManager(object):
         # Default timeout is five minutes.
         if timeout is None:
             timeout = 5 * 60
-        # The configured secret *should* be a uniformly random bytestring,
-        # but you never know what whacky ideas people will come up with.
-        # Applying the "extract" step can't hurt and might just help security.
-        self.secret = HKDF_extract("vepauth", secret)
+        self.secret = secret
+        self._sig_secret = HKDF(self.secret, salt=None, info="SIGNING", size=digest_size)
         self.timeout = timeout
         self.hashmod = hashmod
         self.hashmod_digest_size = digest_size
-        # We use HMAC for two different purposes: signing tokens and
-        # generating secret keys.  It seems prudent to use a different
-        # key for each purpose.
-        okm = HKDF_expand(self.secret, "", digest_size * 2)
-        self._signing_key = okm[:digest_size]
-        self._token_key = okm[digest_size:]
 
     def make_token(self, data):
         """Generate a new token for the given userid.
@@ -111,7 +103,7 @@ class SignedTokenManager(object):
         sig = self._get_signature(payload)
         assert len(sig) == self.hashmod_digest_size
         token = b64encode(payload + sig)
-        return token, self._get_secret(token)
+        return token, self._get_secret(token, data)
 
     def parse_token(self, token):
         """Extract the data and secret key from the token, if valid.
@@ -146,21 +138,23 @@ class SignedTokenManager(object):
             else:
                 raise ValueError("token contains no userid")
         # Re-generate the secret key and return.
-        return data, self._get_secret(token)
+        return data, self._get_secret(token, data)
 
-    def _get_secret(self, token):
+    def _get_secret(self, token, data):
         """Get the secret key associated with the given token.
 
         In this implementation we generate the secret key using HKDF-Expand
         with the token as the "info" parameter.  This avoids having to keep
         any extra state in memory while being sufficiently unguessable.
         """
-        secret = HKDF_expand(self._token_key, token, self.hashmod_digest_size)
+        size = self.hashmod_digest_size
+        salt = data["salt"].encode("ascii")
+        secret = HKDF(self.secret, salt=salt, info=token, size=size)
         return b64encode(secret)
 
     def _get_signature(self, value):
         """Calculate the HMAC signature for the given value."""
-        return hmac.new(self._signing_key, value, self.hashmod).digest()
+        return hmac.new(self._sig_secret, value, self.hashmod).digest()
 
 
 def HKDF_extract(salt, IKM, hashmod=hashlib.sha1):
@@ -182,3 +176,9 @@ def HKDF_expand(PRK, info, L, hashmod=hashlib.sha1):
         T = hmac.new(PRK, data, hashmod).digest()
         output.append(T)
     return "".join(output)[:L]
+
+
+def HKDF(secret, salt, info, size, hashmod=hashlib.sha1):
+    """HKDF-extract-and-expand as a single function."""
+    PRK = HKDF_extract(salt, secret, hashmod)
+    return HKDF_expand(PRK, info, size, hashmod)
