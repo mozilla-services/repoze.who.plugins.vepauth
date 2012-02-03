@@ -48,7 +48,8 @@ from repoze.who.plugins.vepauth.utils import (strings_differ,
                                               parse_authz_header,
                                               NonceCache,
                                               get_signature,
-                                              get_signature_base_string)
+                                              get_signature_base_string,
+                                              decode_oauth_parameter)
 
 
 class VEPAuthPlugin(object):
@@ -247,6 +248,8 @@ class VEPAuthPlugin(object):
             return None
         if params.get("scheme") != "OAuth":
             return None
+        for key, value in params.iteritems():
+            params[key] = decode_oauth_parameter(value)
         # Check that various parameters are as expected.
         if params.get("oauth_signature_method") != "HMAC-SHA1":
             msg = "unsupported OAuth signature method"

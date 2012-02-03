@@ -201,7 +201,8 @@ def get_signature(sigdata, secret):
     This is straight from Section 3.4 of RFC-5849, using the HMAC-SHA1
     signature method.
     """
-    return b64encode(hmac.new(secret, sigdata, sha1).digest())
+    key = encode_oauth_parameter(secret) + "&"
+    return b64encode(hmac.new(key, sigdata, sha1).digest())
 
 
 def get_signature_base_string(request, authz=None):
@@ -259,3 +260,12 @@ def encode_oauth_parameter(value):
     if isinstance(value, unicode):
         value = value.encode("utf8")
     return urllib.quote(value, safe="-._~")
+
+
+def decode_oauth_parameter(value):
+    """Percent-decode an oauth parameter name or value.
+
+    This encapsulates the fiddly definitions from Section 3.6 of RFC-5849,
+    to decode from the  consistent canonical escaped form of any string.
+    """
+    return urllib.unquote(value)
