@@ -74,12 +74,22 @@ def stub_challenge_decider(environ, status, headers):
     return status.split(None, 1)[0] in ("401", "403")
 
 
+class StubTokenManager(SignedTokenManager):
+    """SignedTokenManager that rejects evil email addresses, for testing."""
+
+    def make_token(self, data):
+        if "evil" in data["email"]:
+            return None, None
+        return super(StubTokenManager, self).make_token(data)
+
+
 class TestVEPAuthPlugin(unittest2.TestCase):
     """Testcases for the main VEPAuthPlugin class."""
 
     def setUp(self):
         self.plugin = VEPAuthPlugin(audiences=["localhost"],
-                                    verifier=vep.DummyVerifier())
+                                    verifier=vep.DummyVerifier(),
+                                    token_manager=StubTokenManager())
         application = PluggableAuthenticationMiddleware(stub_application,
                                  [["vep", self.plugin]],
                                  [["vep", self.plugin]],
@@ -92,9 +102,8 @@ class TestVEPAuthPlugin(unittest2.TestCase):
     def _make_assertion(self, address, audience="http://localhost", **kwds):
         return vep.DummyVerifier.make_assertion(address, audience, **kwds)
 
-    def _start_session(self, assertion=None):
-        if assertion is None:
-            assertion = self._make_assertion("test@moz.com")
+    def _start_session(self, email="test@moz.com", *args, **kwds):
+        assertion = self._make_assertion(email, *args, **kwds)
         headers = {"Authorization": "Browser-ID " + assertion}
         session = self.app.get(self.plugin.token_url, headers=headers).json
         return session
@@ -233,6 +242,11 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         r = self.app.get(self.plugin.token_url, headers=headers,
                          extra_environ={"HTTP_HOST": "evil.com"})
         self.assertTrue("oauth_consumer_key" in r.body)
+
+    def test_provisioning_with_unaccepted_email_address(self):
+        assertion = self._make_assertion("evil@hacker.net")
+        headers = {"Authorization": "Browser-ID " + assertion}
+        self.app.get(self.plugin.token_url, headers=headers, status=401)
 
     def test_authenticated_request_works(self):
         session = self._start_session()

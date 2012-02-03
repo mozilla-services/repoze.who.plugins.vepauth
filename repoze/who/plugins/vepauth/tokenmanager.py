@@ -36,6 +36,9 @@ class TokenManager(object):
         along with a secret key used for signing requests.  These will both
         be unique and non-forgable and contain only characters from the
         urlsafe base64 alphabet.
+
+        If the asserted data does not correspond to a valid user then this
+        method will return (None, None).
         """
         raise NotImplementedError  # pragma: no cover
 

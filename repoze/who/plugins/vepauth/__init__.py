@@ -194,6 +194,9 @@ class VEPAuthPlugin(object):
             return self._respond_bad_request(request, msg)
         # OK, we can go ahead and issue a token.
         token, secret = self.token_manager.make_token(data)
+        if token is None:
+            msg = "that email address is not recognised"
+            return self._respond_unauthorized(request, msg)
         resp = Response()
         resp.status = 200
         resp.content_type = "application/json"
