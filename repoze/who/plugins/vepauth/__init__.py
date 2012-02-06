@@ -66,7 +66,7 @@ class VEPAuthPlugin(object):
     def __init__(self, audiences, token_url=None, token_manager=None,
                  verifier=None, nonce_timeout=None):
         if isinstance(audiences, basestring):
-           raise ValueError("\"audiences\" must be a list of strings")
+            raise ValueError("\"audiences\" must be a list of strings")
         # Fill in default values for any unspecified arguments.
         # I'm not declaring defaults on the arguments themselves because
         # we would then have to duplicate those defaults into make_plugin.
@@ -127,7 +127,7 @@ class VEPAuthPlugin(object):
         """Challenge the user for credentials.
 
         This simply sends a 401 response using the WWW-Authenticate field
-        as constructed by forget(). 
+        as constructed by forget().
         """
         resp = Response()
         resp.status = 401
@@ -154,7 +154,7 @@ class VEPAuthPlugin(object):
     #  Methods for exchanging an assertion for an OAuth session token.
     #
 
-    def _process_vep_assertion(self, request): 
+    def _process_vep_assertion(self, request):
         """Exhange a VEP assertion for some session credentials.
 
         This  method extracts a submitted VEP assertion, validates it and
@@ -205,6 +205,7 @@ class VEPAuthPlugin(object):
             "oauth_consumer_key": token,
             "oauth_consumer_secret": secret,
         })
+
         request.environ["repoze.who.application"] = resp
         return None
 
@@ -328,7 +329,7 @@ class VEPAuthPlugin(object):
         """Check if given request is to the token-provisioning URL."""
         if not self.token_url:
             return False
-        request_url =  urljoin(request.host_url, request.path)
+        request_url = urljoin(request.host_url, request.path)
         return request_url == urljoin(request.host_url, self.token_url)
 
 
@@ -343,7 +344,7 @@ def make_plugin(audiences=None, token_url=None, nonce_timeout=None, **kwds):
     # to the security of the protocol.  If you want it set to None to
     # allow checking based on HTTP_HOST, set it to the empty string.
     if audiences is None:
-         raise ValueError('You must specify the "audiences" parameter')
+        raise ValueError('You must specify the "audiences" parameter')
     if not audiences:
         audiences = None
     elif isinstance(audiences, basestring):
@@ -368,7 +369,7 @@ def _load_from_callable(name, kwds, converters={}):
 
     This function is a helper to load and possibly instanciate an argument
     to the plugin.  It grabs the value from the dotted python name found in
-    kwds[name].  If this is a callable, it it looks for arguments of the form 
+    kwds[name].  If this is a callable, it it looks for arguments of the form
     kwds[name_*] and calls the object with them.
     """
     # See if we actually have the named object.
@@ -378,9 +379,9 @@ def _load_from_callable(name, kwds, converters={}):
     obj = resolveDotted(dotted_name)
     # Extract any arguments for the callable.
     obj_kwds = {}
-    prefix = name+"_"
+    prefix = name + "_"
     for key in kwds.keys():
-       if key.startswith(prefix):
+        if key.startswith(prefix):
             obj_kwds[key[len(prefix):]] = kwds.pop(key)
     # To any type conversion on the arguments.
     for key, value in obj_kwds.iteritems():
