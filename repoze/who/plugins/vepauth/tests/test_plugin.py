@@ -83,7 +83,7 @@ class TestVEPAuthPlugin(unittest2.TestCase):
     """Testcases for the main VEPAuthPlugin class."""
 
     def setUp(self):
-        self.plugin = VEPAuthPlugin(audiences=["localhost"],
+        self.plugin = VEPAuthPlugin(audiences=["localhost", ],
                                     verifier=vep.DummyVerifier(),
                                     token_manager=StubTokenManager())
         application = PluggableAuthenticationMiddleware(stub_application,
@@ -110,17 +110,22 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         verifyClass(IChallenger, VEPAuthPlugin)
 
     def test_make_plugin_can_explicitly_set_all_properties(self):
+        def resp_callable(resp, data):
+            pass
+
         plugin = make_plugin(
             audiences="example.com",
             token_url="/test_token_url",
             verifier="vep:DummyVerifier",
             token_manager="vep:LocalVerifier",
-            nonce_timeout=42)
+            nonce_timeout=42,
+            resp_modifier=resp_callable)
         self.assertEquals(plugin.audiences, ["example.com"])
         self.assertEquals(plugin.token_url, "/test_token_url")
         self.assertTrue(isinstance(plugin.verifier, vep.DummyVerifier))
         self.assertTrue(isinstance(plugin.token_manager, vep.LocalVerifier))
         self.assertEquals(plugin.nonce_timeout, 42)
+        self.assertEquals(plugin.resp_modifier, resp_callable)
 
     def test_make_plugin_produces_sensible_defaults(self):
         # The "audiences" parameter must be set explicitly
@@ -131,6 +136,7 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         self.assertTrue(isinstance(plugin.verifier, vep.RemoteVerifier))
         self.assertTrue(isinstance(plugin.token_manager, SignedTokenManager))
         self.assertEquals(plugin.nonce_timeout, 5 * 60)
+        self.assertEquals(plugin.resp_modifier, None)
 
     def test_make_plugin_loads_urlopen_from_dotted_name(self):
         plugin = make_plugin("one two", verifier="vep:LocalVerifier",
@@ -365,3 +371,17 @@ class TestVEPAuthPlugin(unittest2.TestCase):
     def test_authenticate_only_accepts_oauth_credentials(self):
         # Yes, this is a rather pointless test that boosts line coverage...
         self.assertEquals(self.plugin.authenticate(make_environ(), {}), None)
+
+    def test_resp_modifier_is_called(self):
+        def _resp_modifier(resp, content):
+            # add some random values here
+            content['test'] = 'yay'
+
+        authz = "Browser-ID " + self._make_assertion("test@moz.com")
+        headers = {"Authorization": authz}
+        self.plugin.resp_modifier = _resp_modifier
+
+        r = self.app.get(self.plugin.token_url, headers=headers)
+        self.assertTrue("oauth_consumer_key" in r.body)
+        self.assertTrue("test" in r.body)
+        self.assertTrue("yay" in r.body)

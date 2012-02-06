@@ -59,12 +59,24 @@ class VEPAuthPlugin(object):
     implementation of repoze.who.  Authentication is based on exchanging
     a VEP assertion for a short-lived session token, which is then used
     to sign requests using two-legged OAuth.
+
+    The class takes different parameters when instanciated:
+
+    :param audiences: the intended audiences for the browserid assertions
+    :param token_url: the url to use to retrieve the token. (defaults to
+                      /request_token)
+    :param token_manager: the class to make and parse tokens
+    :param verifier: the vep.verifiers verifier to use
+    :param nonce_timeout: the timeout for the nonce (defaults to 5mn) which
+                          will be used in the oauth authentication flow
+    :param json_response_callback: an optional callback that will be called
+                                   just before the body is put
     """
 
     implements(IIdentifier, IChallenger, IAuthenticator)
 
     def __init__(self, audiences, token_url=None, token_manager=None,
-                 verifier=None, nonce_timeout=None):
+                 verifier=None, nonce_timeout=None, resp_modifier=None):
         if isinstance(audiences, basestring):
             raise ValueError("\"audiences\" must be a list of strings")
         # Fill in default values for any unspecified arguments.
@@ -88,6 +100,7 @@ class VEPAuthPlugin(object):
         self.verifier = verifier
         self.nonce_timeout = nonce_timeout
         self.nonce_cache = NonceCache(nonce_timeout)
+        self.resp_modifier = resp_modifier
 
     def identify(self, environ):
         """Extract the authentication info from the request.
@@ -201,10 +214,18 @@ class VEPAuthPlugin(object):
         resp = Response()
         resp.status = 200
         resp.content_type = "application/json"
-        resp.body = json.dumps({
+
+        content = {
             "oauth_consumer_key": token,
             "oauth_consumer_secret": secret,
-        })
+        }
+
+        # pass the response and the json content to the response_modifier
+        # callback so it can modify it if needed
+        if self.resp_modifier is not None:
+            self.resp_modifier(resp, content)
+
+        resp.body = json.dumps(content)
 
         request.environ["repoze.who.application"] = resp
         return None
@@ -333,7 +354,8 @@ class VEPAuthPlugin(object):
         return request_url == urljoin(request.host_url, self.token_url)
 
 
-def make_plugin(audiences=None, token_url=None, nonce_timeout=None, **kwds):
+def make_plugin(audiences=None, token_url=None, nonce_timeout=None,
+        resp_modifier=None, **kwds):
     """Make a VEPAuthPlugin using values from a .ini config file.
 
     This is a helper function for loading a VEPAuthPlugin via the
@@ -351,6 +373,10 @@ def make_plugin(audiences=None, token_url=None, nonce_timeout=None, **kwds):
         audiences = audiences.split()
     # Load the token manager, possibly from a class+args.
     token_manager = _load_from_callable("token_manager", kwds)
+    # Load the response modifier from a dotted name
+    if isinstance(resp_modifier, str):
+        resp_modifier = resolveDotted(resp_modifier)
+
     # Load the VEP verifier, possibly from a class+args.
     # Assume "urlopen" is a dotted-name of a callable.
     verifier = _load_from_callable("verifier", kwds, converters={
@@ -360,7 +386,7 @@ def make_plugin(audiences=None, token_url=None, nonce_timeout=None, **kwds):
     for unknown_kwd in kwds:
         raise TypeError("unknown keyword argument: %s" % (unknown_kwd,))
     plugin = VEPAuthPlugin(audiences, token_url, token_manager, verifier,
-                           nonce_timeout)
+                           nonce_timeout, resp_modifier)
     return plugin
 
 
