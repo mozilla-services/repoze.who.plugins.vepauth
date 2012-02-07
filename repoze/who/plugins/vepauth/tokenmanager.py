@@ -87,7 +87,8 @@ class SignedTokenManager(object):
         if timeout is None:
             timeout = 5 * 60
         self.secret = secret
-        self._sig_secret = HKDF(self.secret, salt=None, info="SIGNING", size=digest_size)
+        self._sig_secret = HKDF(self.secret, salt=None, info="SIGNING",
+                                size=digest_size)
         self.timeout = timeout
         self.hashmod = hashmod
         self.hashmod_digest_size = digest_size

@@ -5,7 +5,6 @@
 import unittest2
 import urllib2
 import time
-from cStringIO import StringIO
 
 from webob import Request
 from webtest import TestApp
@@ -14,11 +13,8 @@ from zope.interface.verify import verifyClass
 
 from repoze.who.interfaces import IIdentifier, IAuthenticator, IChallenger
 from repoze.who.middleware import PluggableAuthenticationMiddleware
-from repoze.who.classifiers import (default_challenge_decider,
-                                    default_request_classifier)
 
 import vep
-from vep.utils import get_assertion_info
 
 from repoze.who.plugins.vepauth import VEPAuthPlugin, make_plugin
 from repoze.who.plugins.vepauth.tokenmanager import SignedTokenManager
