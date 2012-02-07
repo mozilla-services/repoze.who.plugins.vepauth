@@ -66,6 +66,8 @@ class VEPAuthPlugin(object):
     :param token_url: the url to use to retrieve the token. (defaults to
                       /request_token)
     :param token_manager: the class to make and parse tokens
+    :param applications: the application names that can be used in the
+                         token_url.
     :param verifier: the vep.verifiers verifier to use
     :param nonce_timeout: the timeout for the nonce (defaults to 5mn) which
                           will be used in the oauth authentication flow
@@ -76,7 +78,8 @@ class VEPAuthPlugin(object):
     implements(IIdentifier, IChallenger, IAuthenticator)
 
     def __init__(self, audiences, token_url=None, token_manager=None,
-                 verifier=None, nonce_timeout=None, resp_modifier=None):
+                 applications=None, verifier=None, nonce_timeout=None,
+                 resp_modifier=None):
         if isinstance(audiences, basestring):
             raise ValueError("\"audiences\" must be a list of strings")
         # Fill in default values for any unspecified arguments.
@@ -101,6 +104,7 @@ class VEPAuthPlugin(object):
         self.nonce_timeout = nonce_timeout
         self.nonce_cache = NonceCache(nonce_timeout)
         self.resp_modifier = resp_modifier
+        self.applications = applications
 
     def identify(self, environ):
         """Extract the authentication info from the request.
@@ -350,12 +354,46 @@ class VEPAuthPlugin(object):
         """Check if given request is to the token-provisioning URL."""
         if not self.token_url:
             return False
+
         request_url = urljoin(request.host_url, request.path)
-        return request_url == urljoin(request.host_url, self.token_url)
+        if request_url == urljoin(request.host_url, self.token_url):
+            return True
+
+        return(self.token_url_regexp and
+               self.token_url_regexp.match(request.path))
+
+    @property
+    def token_url_regexp(self):
+        """Returns the regexp to check against if there is a regexp to build,
+        otherwise return False.
+
+        This is provided as a property, so its state is persisted for the
+        duration of the object.
+        """
+        if "{application}" in self.token_url and self.applications:
+            if not hasattr(self, '_token_url_regexp'):
+                regexp = self.token_url.replace("{application}",
+                                "(%s)" % "|".join(self.applications))
+                setattr(self, '_token_url_regexp', re.compile(regexp))
+            return self._token_url_regexp
+        else:
+            return False
+
+    @property
+    def applications(self):
+        return self._applications
+
+    @applications.setter
+    def applications(self, value):
+        """defines an accessor here so we remove the caching on the token_url
+        regexp when redefining the list of applications"""
+        if hasattr(self, "_token_url_regexp"):
+            del self._token_url_regexp
+        self._applications = value
 
 
 def make_plugin(audiences=None, token_url=None, nonce_timeout=None,
-        resp_modifier=None, **kwds):
+        resp_modifier=None, applications=None, **kwds):
     """Make a VEPAuthPlugin using values from a .ini config file.
 
     This is a helper function for loading a VEPAuthPlugin via the
@@ -385,8 +423,8 @@ def make_plugin(audiences=None, token_url=None, nonce_timeout=None,
     # If there are any kwd args left over, that's an error.
     for unknown_kwd in kwds:
         raise TypeError("unknown keyword argument: %s" % (unknown_kwd,))
-    plugin = VEPAuthPlugin(audiences, token_url, token_manager, verifier,
-                           nonce_timeout, resp_modifier)
+    plugin = VEPAuthPlugin(audiences, token_url, token_manager, applications,
+                           verifier, nonce_timeout, resp_modifier)
     return plugin
 
 

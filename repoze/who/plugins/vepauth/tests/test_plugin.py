@@ -119,13 +119,15 @@ class TestVEPAuthPlugin(unittest2.TestCase):
             verifier="vep:DummyVerifier",
             token_manager="vep:LocalVerifier",
             nonce_timeout=42,
-            resp_modifier=resp_callable)
+            resp_modifier=resp_callable,
+            applications=["foo", "bar", "baz"])
         self.assertEquals(plugin.audiences, ["example.com"])
         self.assertEquals(plugin.token_url, "/test_token_url")
         self.assertTrue(isinstance(plugin.verifier, vep.DummyVerifier))
         self.assertTrue(isinstance(plugin.token_manager, vep.LocalVerifier))
         self.assertEquals(plugin.nonce_timeout, 42)
         self.assertEquals(plugin.resp_modifier, resp_callable)
+        self.assertEquals(plugin.applications, ["foo", "bar", "baz"])
 
     def test_make_plugin_produces_sensible_defaults(self):
         # The "audiences" parameter must be set explicitly
@@ -385,3 +387,24 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         self.assertTrue("oauth_consumer_key" in r.body)
         self.assertTrue("test" in r.body)
         self.assertTrue("yay" in r.body)
+
+    def test_token_url_only_accepts_defined_applications(self):
+        authz = "Browser-ID " + self._make_assertion("test@moz.com")
+        headers = {"Authorization": authz}
+        self.plugin.token_url = "/1.1/{application}/token"
+        self.plugin.applications = ["foo", "bar", "baz"]
+
+        # Requesting the defined applications should work properly
+        [self.app.get("/1.1/%s/token" % app, headers=headers, status=200)
+                for app in self.plugin.applications]
+
+    def test_token_url_regexp_works(self):
+        # specifying a list of applications and a token_url with {application}
+        # in it should make a regexp avalaible to check request.path against.
+        self.plugin.token_url = "/{application}/yay"
+        self.plugin.applications = ["foo", "bar"]
+        self.assertTrue(self.plugin.token_url_regexp.match("/bar/yay"))
+
+        # test that changing the application list actually changes the regexp
+        self.plugin.applications = ["foo", ]
+        self.assertFalse(self.plugin.token_url_regexp.match("/bar/yay"))
