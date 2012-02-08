@@ -10,7 +10,6 @@ Helper functions for repoze.who.plugins.vepauth.
 import os
 import re
 import time
-import json
 import heapq
 import urllib
 import threading

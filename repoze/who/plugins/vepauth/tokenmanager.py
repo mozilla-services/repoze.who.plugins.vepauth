@@ -11,6 +11,8 @@ import hashlib
 from base64 import urlsafe_b64encode as b64encode
 from base64 import urlsafe_b64decode as b64decode
 
+from webob.exc import HTTPNotFound
+
 from repoze.who.plugins.vepauth.utils import strings_differ
 
 
@@ -37,8 +39,11 @@ class TokenManager(object):
         be unique and non-forgable and contain only characters from the
         urlsafe base64 alphabet.
 
+        The method also returns a third value which is additional data to give
+        to the client.
+
         If the asserted data does not correspond to a valid user then this
-        method will return (None, None).
+        method will return (None, None, None).
         """
         raise NotImplementedError  # pragma: no cover
 
@@ -73,7 +78,8 @@ class SignedTokenManager(object):
                    if not specified then hashlib.sha1 will be used.
     """
 
-    def __init__(self, secret=None, timeout=None, hashmod=None):
+    def __init__(self, secret=None, timeout=None, hashmod=None,
+            applications=None):
         # Default hashmod is SHA1
         if hashmod is None:
             hashmod = hashlib.sha1
@@ -86,20 +92,28 @@ class SignedTokenManager(object):
         # Default timeout is five minutes.
         if timeout is None:
             timeout = 5 * 60
+        # Default list of applications is empty
+        if applications is None:
+            applications = ()
         self.secret = secret
         self._sig_secret = HKDF(self.secret, salt=None, info="SIGNING",
                                 size=digest_size)
         self.timeout = timeout
         self.hashmod = hashmod
         self.hashmod_digest_size = digest_size
+        self.applications = applications
 
-    def make_token(self, data):
+    def make_token(self, request, data):
         """Generate a new token for the given userid.
 
         In this implementation the token is a JSON dump of the given data,
         including an expiry time and salt.  It has a HMAC signature appended
         and is b64-encoded for transmission.
         """
+        if ('application' in request.matchdict and self.applications
+            and request.matchdict['application'] not in self.applications):
+            raise HTTPNotFound()
+
         data = data.copy()
         data["salt"] = os.urandom(3).encode("hex")
         data["expires"] = time.time() + self.timeout
@@ -107,7 +121,7 @@ class SignedTokenManager(object):
         sig = self._get_signature(payload)
         assert len(sig) == self.hashmod_digest_size
         token = b64encode(payload + sig)
-        return token, self._get_secret(token, data)
+        return token, self._get_secret(token, data), None
 
     def parse_token(self, token):
         """Extract the data and secret key from the token, if valid.

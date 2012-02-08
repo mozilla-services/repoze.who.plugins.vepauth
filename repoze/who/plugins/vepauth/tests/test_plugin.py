@@ -73,10 +73,10 @@ def stub_challenge_decider(environ, status, headers):
 class StubTokenManager(SignedTokenManager):
     """SignedTokenManager that rejects evil email addresses, for testing."""
 
-    def make_token(self, data):
+    def make_token(self, request, data):
         if "evil" in data["email"]:
-            return None, None
-        return super(StubTokenManager, self).make_token(data)
+            return None, None, None
+        return super(StubTokenManager, self).make_token(request, data)
 
 
 class TestVEPAuthPlugin(unittest2.TestCase):
@@ -365,3 +365,17 @@ class TestVEPAuthPlugin(unittest2.TestCase):
     def test_authenticate_only_accepts_oauth_credentials(self):
         # Yes, this is a rather pointless test that boosts line coverage...
         self.assertEquals(self.plugin.authenticate(make_environ(), {}), None)
+
+    def test_token_url_can_contain_placeholders(self):
+        self.plugin.token_url = "/{application}/{test}/foo"
+
+        authz = "Browser-ID " + self._make_assertion("test@moz.com")
+        headers = {"Authorization": authz}
+
+        # valid pattern should return a consumer key
+        r = self.app.get("/foo/bar/foo", headers=headers)
+        self.assertTrue("oauth_consumer_key" in r.body)
+
+        # this doesn't match the pattern ant should return a 401
+        r = self.app.get("/foo/bar/bar", headers=headers, status=401)
+        self.assertTrue("oauth_consumer_key" not in r.body)
