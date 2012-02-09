@@ -76,6 +76,11 @@ class SignedTokenManager(object):
 
        * hashmod:  the hashing module to use for various HMAC operations;
                    if not specified then hashlib.sha1 will be used.
+
+       * applications: If the request contains a matchdict with "application"
+                       in it, it should be one of the ones provided by this
+                       option;
+                       if not sepcified then an empty list will be used.
     """
 
     def __init__(self, secret=None, timeout=None, hashmod=None,
