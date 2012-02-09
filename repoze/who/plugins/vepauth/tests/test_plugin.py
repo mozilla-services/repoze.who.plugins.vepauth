@@ -7,6 +7,7 @@ import urllib2
 import time
 
 from webob import Request
+from webob.exc import HTTPNotFound
 from webtest import TestApp
 
 from zope.interface.verify import verifyClass
@@ -372,10 +373,22 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         authz = "Browser-ID " + self._make_assertion("test@moz.com")
         headers = {"Authorization": authz}
 
+        # this doesn't match the pattern and should return a 401
+        r = self.app.get("/foo/bar/bar", headers=headers, status=401)
+        self.assertTrue("oauth_consumer_key" not in r.body)
+
         # valid pattern should return a consumer key
         r = self.app.get("/foo/bar/foo", headers=headers)
         self.assertTrue("oauth_consumer_key" in r.body)
 
-        # this doesn't match the pattern and should return a 401
-        r = self.app.get("/foo/bar/bar", headers=headers, status=401)
-        self.assertTrue("oauth_consumer_key" not in r.body)
+        self.plugin.token_manager.applications = ("foo", "bar", "baz")
+
+        # defining manually a set of applications an making a request for one
+        # of them should work
+        r = self.app.get("/foo/bar/foo", headers=headers)
+        self.assertTrue("oauth_consumer_key" in r.body)
+
+        # this doesn't match any of the defined applications and should return
+        # a 404
+        self.assertRaises(HTTPNotFound, self.app.get, "/not_an_app/bar/foo",
+                headers=headers)
