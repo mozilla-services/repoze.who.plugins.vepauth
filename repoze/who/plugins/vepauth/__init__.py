@@ -35,7 +35,7 @@ from urlparse import urljoin
 
 from zope.interface import implements
 
-from webob import Request, Response
+from webob import Request as Request_, Response
 
 from repoze.who.interfaces import IIdentifier, IAuthenticator, IChallenger
 from repoze.who.utils import resolveDotted
@@ -59,6 +59,19 @@ class VEPAuthPlugin(object):
     implementation of repoze.who.  Authentication is based on exchanging
     a VEP assertion for a short-lived session token, which is then used
     to sign requests using two-legged OAuth.
+
+    The class takes different parameters when instanciated:
+
+    :param audiences: the intended audiences for the browserid assertions
+    :param token_url: the url to use to retrieve the token. (defaults to
+                      /request_token)
+    :param token_manager: the class to make and parse tokens
+    :param applications: the application names that can be used in the
+                         token_url.
+    :param verifier: the vep.verifiers verifier to use
+    :param nonce_timeout: the timeout for the nonce (defaults to 5mn) which
+                          will be used in the oauth authentication flow
+
     """
 
     implements(IIdentifier, IChallenger, IAuthenticator)
@@ -194,7 +207,7 @@ class VEPAuthPlugin(object):
             msg = "Invalid BrowserID assertion: " + str(e)
             return self._respond_bad_request(request, msg)
         # OK, we can go ahead and issue a token.
-        token, secret = self.token_manager.make_token(data)
+        token, secret, extra = self.token_manager.make_token(request, data)
         if token is None:
             msg = "that email address is not recognised"
             return self._respond_unauthorized(request, msg)
@@ -329,8 +342,16 @@ class VEPAuthPlugin(object):
         """Check if given request is to the token-provisioning URL."""
         if not self.token_url:
             return False
-        request_url = urljoin(request.host_url, request.path)
-        return request_url == urljoin(request.host_url, self.token_url)
+
+        if self.token_url == request.path:
+            return True
+
+        request.match(self.token_url)
+
+        if request.matchdict:
+            return True
+
+        return False
 
 
 def make_plugin(audiences=None, token_url=None, nonce_timeout=None, **kwds):
@@ -394,3 +415,16 @@ def _load_from_callable(name, kwds, converters={}):
     elif obj_kwds:
         raise ValueError("arguments provided for non-callable %r" % (name,))
     return obj
+
+
+class Request(Request_):
+    def __init__(self, *args, **kwargs):
+        super(Request, self).__init__(*args, **kwargs)
+        self.matchdict = {}
+
+    def match(self, route):
+        """Set the matchdict parameter given a route"""
+        regexp = re.sub(r"\{([a-zA-Z][^\}]*)\}", r"(?P<\1>([^}]+))", route)
+        r = re.match(regexp, self.path)
+        if r is not None:
+            self.matchdict = r.groupdict()
