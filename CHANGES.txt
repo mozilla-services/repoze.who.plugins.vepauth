@@ -1,4 +1,15 @@
 
+0.2.0 - ????-??-??
+==================
+
+ * Added basic pattern-matching for the token_url, e.g. "/{app}/token".
+ * Made TokenManager.make_token and TokenManager.parse_token accept the
+   incoming request as first argument, mostly so they can get at the
+   results of pattern-matching.
+ * Let TokenManager.make_token return a dict of extra info to be included
+   in the response.
+
+
 0.1.0 - 2012-02-07
 ==================
 
