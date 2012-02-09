@@ -115,8 +115,7 @@ class SignedTokenManager(object):
         including an expiry time and salt.  It has a HMAC signature appended
         and is b64-encoded for transmission.
         """
-        if ('application' in request.matchdict and self.applications
-            and request.matchdict['application'] not in self.applications):
+        if self._is_request_valid(request, data):
             raise HTTPNotFound()
 
         data = data.copy()
@@ -162,6 +161,18 @@ class SignedTokenManager(object):
                 raise ValueError("token contains no userid")
         # Re-generate the secret key and return.
         return data, self._get_secret(token, data)
+
+    def _is_request_valid(self, request, data):
+        """Checks that the request is valid.
+
+        If the matchdict contains "application", checks that application is one
+        of the defined ones in self.applications.
+
+        This method is to be overwritted by potential cihlds of this class, for
+        e.g looking the list of possible application choices in a database.
+        """
+        return ('application' in request.matchdict and self.applications
+                 and request.matchdict['application'] not in self.applications)
 
     def _get_secret(self, token, data):
         """Get the secret key associated with the given token.
