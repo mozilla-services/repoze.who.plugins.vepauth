@@ -376,6 +376,6 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         r = self.app.get("/foo/bar/foo", headers=headers)
         self.assertTrue("oauth_consumer_key" in r.body)
 
-        # this doesn't match the pattern ant should return a 401
+        # this doesn't match the pattern and should return a 401
         r = self.app.get("/foo/bar/bar", headers=headers, status=401)
         self.assertTrue("oauth_consumer_key" not in r.body)
