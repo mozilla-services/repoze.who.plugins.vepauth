@@ -31,7 +31,6 @@ import re
 import json
 import time
 import fnmatch
-from urlparse import urljoin
 
 from zope.interface import implements
 
@@ -208,19 +207,25 @@ class VEPAuthPlugin(object):
             return self._respond_bad_request(request, msg)
         # OK, we can go ahead and issue a token.
         token, secret, extra = self.token_manager.make_token(request, data)
+
         if token is None:
             msg = "that email address is not recognised"
             return self._respond_unauthorized(request, msg)
         resp = Response()
         resp.status = 200
         resp.content_type = "application/json"
-        resp.body = json.dumps({
+
+        body = {
             "oauth_consumer_key": token,
             "oauth_consumer_secret": secret,
-        })
+        }
+
+        if extra is not None:
+            body.extend(extra)
+
+        resp.body = json.dumps(body)
 
         request.environ["repoze.who.application"] = resp
-        return None
 
     def _check_audience(self, request, audience):
         """Check that the audience is valid according to our configuration.
@@ -379,7 +384,7 @@ def make_plugin(audiences=None, token_url=None, nonce_timeout=None, **kwds):
     })
     # If there are any kwd args left over, that's an error.
     for unknown_kwd in kwds:
-        raise TypeError("unknown keyword argument: %s" % (unknown_kwd,))
+        raise TypeError("unknown keyword argument: %s" % unknown_kwd)
     plugin = VEPAuthPlugin(audiences, token_url, token_manager, verifier,
                            nonce_timeout)
     return plugin
