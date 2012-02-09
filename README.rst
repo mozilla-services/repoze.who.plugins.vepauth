@@ -62,3 +62,18 @@ OAuth mode::
 Session tokens are timestamped and will eventually expire.  If this happens
 you will receive a 401 response as before, and should POST a new assertion
 to obtain fresh credentials.
+
+Extending the token management
+------------------------------
+
+`repoze.who.plugins.vepauth` is extensible. If you want to provide a different
+mechanism to manage the tokens, you can do so by providing a different token
+manager instance to the plugin with the `token_manager` option.
+
+The `TokenManager` class have two methods than need to be implemented (it's an
+abstract class): `make_token` and `parse_token`. The implementation details are
+left to the childs classes.
+
+`repose.who.plugins.vepauth` comes with one `SignedTokenManager` which
+implement a simple token management class in pure python. It has a number of
+methods that can be overridden to customize its behavior.
