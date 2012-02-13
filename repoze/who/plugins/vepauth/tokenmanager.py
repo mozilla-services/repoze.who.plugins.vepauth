@@ -80,11 +80,12 @@ class SignedTokenManager(object):
        * applications: If the request contains a matchdict with "application"
                        in it, it should be one of the ones provided by this
                        option;
-                       if not sepcified then an empty list will be used.
+                       if not specified then an empty list will be used (and
+                       all the applications will be considered valid)
     """
 
     def __init__(self, secret=None, timeout=None, hashmod=None,
-            applications=None):
+                 applications=None):
         # Default hashmod is SHA1
         if hashmod is None:
             hashmod = hashlib.sha1
