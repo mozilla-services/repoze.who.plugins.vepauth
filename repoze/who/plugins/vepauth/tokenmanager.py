@@ -115,8 +115,7 @@ class SignedTokenManager(object):
         including an expiry time and salt.  It has a HMAC signature appended
         and is b64-encoded for transmission.
         """
-        if self._is_request_valid(request, data):
-            raise HTTPNotFound()
+        self._validate_request(request, data)
 
         data = data.copy()
         data["salt"] = os.urandom(3).encode("hex")
@@ -162,7 +161,7 @@ class SignedTokenManager(object):
         # Re-generate the secret key and return.
         return data, self._get_secret(token, data)
 
-    def _is_request_valid(self, request, data):
+    def _validate_request(self, request, data):
         """Checks that the request is valid.
 
         If the matchdict contains "application", checks that application is one
@@ -170,9 +169,14 @@ class SignedTokenManager(object):
 
         This method is to be overwritted by potential cihlds of this class, for
         e.g looking the list of possible application choices in a database.
+
+        It is up to this method to return the appropriate HTTP exceptions (e.g
+        a 404 if it is found that the requested url does not exist)
         """
-        return ('application' in request.matchdict and self.applications
-                 and request.matchdict['application'] not in self.applications)
+        if ('application' in request.matchdict and self.applications and
+                request.matchdict['application'] not in self.applications):
+            raise HTTPNotFound("The '%s' application does not exist" %
+                    request.matchdict['application'])
 
     def _get_secret(self, token, data):
         """Get the secret key associated with the given token.
