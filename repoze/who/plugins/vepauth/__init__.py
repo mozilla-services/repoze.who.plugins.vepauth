@@ -65,8 +65,6 @@ class VEPAuthPlugin(object):
     :param token_url: the url to use to retrieve the token. (defaults to
                       /request_token)
     :param token_manager: the class to make and parse tokens
-    :param applications: the application names that can be used in the
-                         token_url.
     :param verifier: the vep.verifiers verifier to use
     :param nonce_timeout: the timeout for the nonce (defaults to 5mn) which
                           will be used in the oauth authentication flow
