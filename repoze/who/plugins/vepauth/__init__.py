@@ -219,7 +219,7 @@ class VEPAuthPlugin(object):
         }
 
         if extra is not None:
-            body.extend(extra)
+            body.update(extra)
 
         resp.body = json.dumps(body)
 

@@ -80,6 +80,14 @@ class StubTokenManager(SignedTokenManager):
         return super(StubTokenManager, self).make_token(request, data)
 
 
+class ExtraTokenManager(StubTokenManager):
+
+    def make_token(self, request, data):
+        token, signature, _ = super(ExtraTokenManager, self)\
+                .make_token(request, data)
+        return token, signature, {'foo': 'bar'}
+
+
 class TestVEPAuthPlugin(unittest2.TestCase):
     """Testcases for the main VEPAuthPlugin class."""
 
@@ -392,3 +400,12 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         # a 404
         self.assertRaises(HTTPNotFound, self.app.get, "/not_an_app/bar/foo",
                 headers=headers)
+
+    def test_extra_data_gets_added(self):
+        self.plugin.token_manager = ExtraTokenManager()
+
+        authz = "Browser-ID " + self._make_assertion("test@moz.com")
+        headers = {"Authorization": authz}
+        resp = self.app.get(self.plugin.token_url, headers=headers, status=200)
+        self.assertTrue('foo' in resp.json)
+        self.assertEqual(resp.json['foo'], 'bar')
