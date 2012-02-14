@@ -111,7 +111,10 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         assertion = self._make_assertion(email, *args, **kwds)
         headers = {"Authorization": "Browser-ID " + assertion}
         session = self.app.get(self.plugin.token_url, headers=headers).json
-        return session
+        return {
+            "token": session["id"],
+            "secret": session["key"],
+        }
 
     def test_implements(self):
         verifyClass(IIdentifier, VEPAuthPlugin)
@@ -139,7 +142,7 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         self.assertEquals(plugin.token_url, "/request_token")
         self.assertTrue(isinstance(plugin.verifier, vep.RemoteVerifier))
         self.assertTrue(isinstance(plugin.token_manager, SignedTokenManager))
-        self.assertEquals(plugin.nonce_timeout, 5 * 60)
+        self.assertEquals(plugin.nonce_timeout, 60)
 
     def test_make_plugin_loads_urlopen_from_dotted_name(self):
         plugin = make_plugin("one two", verifier="vep:LocalVerifier",
@@ -173,7 +176,7 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         headers = self.plugin.forget(make_environ(), {})
         self.assertEquals(len(headers), 1)
         self.assertEquals(headers[0][0], "WWW-Authenticate")
-        self.assertTrue(headers[0][1].startswith("OAuth+VEP "))
+        self.assertTrue(headers[0][1].startswith("MAC+BrowserID "))
         self.assertTrue(self.plugin.token_url in headers[0][1])
 
     def test_unauthenticated_requests_get_a_challenge(self):
@@ -181,13 +184,13 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         # with the appropriate challenge.
         r = self.app.get("/", status=401)
         challenge = r.headers["WWW-Authenticate"]
-        self.assertTrue(challenge.startswith("OAuth+VEP"))
+        self.assertTrue(challenge.startswith("MAC+BrowserID"))
         self.assertTrue(self.plugin.token_url in challenge)
         # Requests to URLs with "forbidden" generate a 403 in the downstream
         # app, which should be converted into a 401 by the plugin.
         r = self.app.get("/forbidden", status=401)
         challenge = r.headers["WWW-Authenticate"]
-        self.assertTrue(challenge.startswith("OAuth+VEP"))
+        self.assertTrue(challenge.startswith("MAC+BrowserID"))
         self.assertTrue(self.plugin.token_url in challenge)
 
     def test_sending_an_assertion_creates_a_token(self):
@@ -195,19 +198,19 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         headers = {"Authorization": authz}
         # This fails since we're not at the token-provisioning URL.
         r = self.app.get("/", headers=headers, status=401)
-        self.assertTrue("oauth_consumer_key" not in r.body)
+        self.assertTrue("id" not in r.body)
         # This works since we're at the postback url.
         r = self.app.get(self.plugin.token_url, headers=headers)
-        self.assertTrue("oauth_consumer_key" in r.body)
+        self.assertTrue("id" in r.body)
 
     def test_that_an_empty_token_url_disables_provisioning(self):
         authz = "Browser-ID " + self._make_assertion("test@moz.com")
         headers = {"Authorization": authz}
         self.plugin.token_url = ""
         r = self.app.get("/", headers=headers, status=401)
-        self.assertTrue("oauth_consumer_key" not in r.body)
+        self.assertTrue("id" not in r.body)
         r = self.app.get("/request_token", headers=headers, status=401)
-        self.assertTrue("oauth_consumer_key" not in r.body)
+        self.assertTrue("id" not in r.body)
 
     def test_non_get_requests_give_405(self):
         authz = "Browser-ID " + self._make_assertion("test@moz.com")
@@ -246,7 +249,7 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         self.assertTrue("audience" in r.body)
         r = self.app.get(self.plugin.token_url, headers=headers,
                          extra_environ={"HTTP_HOST": "evil.com"})
-        self.assertTrue("oauth_consumer_key" in r.body)
+        self.assertTrue("id" in r.body)
 
     def test_provisioning_with_unaccepted_email_address(self):
         assertion = self._make_assertion("evil@hacker.net")
@@ -260,18 +263,9 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         r = self.app.request(req)
         self.assertEquals(r.body, "test@moz.com")
 
-    def test_authentication_with_non_oauth_scheme_fails(self):
+    def test_authentication_with_non_mac_scheme_fails(self):
         req = Request.blank("/")
         req.authorization = "OpenID hello=world"
-        self.app.request(req, status=401)
-
-    def test_authentication_with_plaintext_sig_method_fails(self):
-        session = self._start_session()
-        req = Request.blank("/")
-        sign_request(req, **session)
-        authz = req.environ["HTTP_AUTHORIZATION"]
-        authz = authz.replace("HMAC-SHA1", "PLAINTEXT")
-        req.environ["HTTP_AUTHORIZATION"] = authz
         self.app.request(req, status=401)
 
     def test_authentication_without_consumer_key_fails(self):
@@ -279,7 +273,7 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         req = Request.blank("/")
         sign_request(req, **session)
         authz = req.environ["HTTP_AUTHORIZATION"]
-        authz = authz.replace("oauth_consumer_key", "oauth_typo_key")
+        authz = authz.replace("id", "idd")
         req.environ["HTTP_AUTHORIZATION"] = authz
         self.app.request(req, status=401)
 
@@ -288,7 +282,7 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         req = Request.blank("/")
         sign_request(req, **session)
         authz = req.environ["HTTP_AUTHORIZATION"]
-        authz = authz.replace("oauth_timestamp", "oauth_typostamp")
+        authz = authz.replace("ts", "typostamp")
         req.environ["HTTP_AUTHORIZATION"] = authz
         self.app.request(req, status=401)
 
@@ -297,23 +291,37 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         req = Request.blank("/")
         sign_request(req, **session)
         authz = req.environ["HTTP_AUTHORIZATION"]
-        authz = authz.replace("oauth_nonce", "oauth_typonce")
+        authz = authz.replace("nonce", "typonce")
         req.environ["HTTP_AUTHORIZATION"] = authz
         self.app.request(req, status=401)
 
     def test_authentication_with_expired_timestamp_fails(self):
         session = self._start_session()
         req = Request.blank("/")
+        # Do an initial request so that the server can
+        # calculate and cache our clock skew.
+        ts = str(int(time.time()))
+        req.authorization = ("MAC", {"ts": ts})
+        sign_request(req, **session)
+        self.app.request(req, status=200)
+        # Now do one with a really old timestamp.
         ts = str(int(time.time() - 1000))
-        req.authorization = ("OAuth", {"oauth_timestamp": ts})
+        req.authorization = ("MAC", {"ts": ts})
         sign_request(req, **session)
         self.app.request(req, status=401)
 
     def test_authentication_with_far_future_timestamp_fails(self):
         session = self._start_session()
         req = Request.blank("/")
+        # Do an initial request so that the server can
+        # calculate and cache our clock skew.
+        ts = str(int(time.time()))
+        req.authorization = ("MAC", {"ts": ts})
+        sign_request(req, **session)
+        self.app.request(req, status=200)
+        # Now do one with a far future timestamp.
         ts = str(int(time.time() + 1000))
-        req.authorization = ("OAuth", {"oauth_timestamp": ts})
+        req.authorization = ("MAC", {"ts": ts})
         sign_request(req, **session)
         self.app.request(req, status=401)
 
@@ -321,13 +329,13 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         session = self._start_session()
         # First request with that nonce should succeed.
         req = Request.blank("/")
-        req.authorization = ("OAuth", {"oauth_nonce": "PEPPER"})
+        req.authorization = ("MAC", {"nonce": "PEPPER"})
         sign_request(req, **session)
         r = self.app.request(req)
         self.assertEquals(r.body, "test@moz.com")
         # Second request with that nonce should fail.
         req = Request.blank("/")
-        req.authorization = ("OAuth", {"oauth_nonce": "PEPPER"})
+        req.authorization = ("MAC", {"nonce": "PEPPER"})
         sign_request(req, **session)
         self.app.request(req, status=401)
 
@@ -335,7 +343,7 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         session = self._start_session()
         req = Request.blank("/")
         sign_request(req, **session)
-        token = parse_authz_header(req)["oauth_consumer_key"]
+        token = parse_authz_header(req)["id"]
         authz = req.environ["HTTP_AUTHORIZATION"]
         authz = authz.replace(token, "XXX" + token)
         req.environ["HTTP_AUTHORIZATION"] = authz
@@ -345,7 +353,7 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         session = self._start_session()
         req = Request.blank("/")
         sign_request(req, **session)
-        signature = parse_authz_header(req)["oauth_signature"]
+        signature = parse_authz_header(req)["mac"]
         authz = req.environ["HTTP_AUTHORIZATION"]
         authz = authz.replace(signature, "XXX" + signature)
         req.environ["HTTP_AUTHORIZATION"] = authz
@@ -365,13 +373,13 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         # Request with invalid credentials gets a 401.
         req = Request.blank("/public")
         sign_request(req, **session)
-        signature = parse_authz_header(req)["oauth_signature"]
+        signature = parse_authz_header(req)["mac"]
         authz = req.environ["HTTP_AUTHORIZATION"]
         authz = authz.replace(signature, "XXX" + signature)
         req.environ["HTTP_AUTHORIZATION"] = authz
         resp = self.app.request(req, status=401)
 
-    def test_authenticate_only_accepts_oauth_credentials(self):
+    def test_authenticate_only_accepts_mac_credentials(self):
         # Yes, this is a rather pointless test that boosts line coverage...
         self.assertEquals(self.plugin.authenticate(make_environ(), {}), None)
 
@@ -383,18 +391,18 @@ class TestVEPAuthPlugin(unittest2.TestCase):
 
         # this doesn't match the pattern and should return a 401
         r = self.app.get("/foo/bar/bar", headers=headers, status=401)
-        self.assertTrue("oauth_consumer_key" not in r.body)
+        self.assertTrue("id" not in r.body)
 
         # valid pattern should return a consumer key
         r = self.app.get("/foo/bar/foo", headers=headers)
-        self.assertTrue("oauth_consumer_key" in r.body)
+        self.assertTrue("id" in r.body)
 
         self.plugin.token_manager.applications = ("foo", "bar", "baz")
 
         # defining manually a set of applications an making a request for one
         # of them should work
         r = self.app.get("/foo/bar/foo", headers=headers)
-        self.assertTrue("oauth_consumer_key" in r.body)
+        self.assertTrue("id" in r.body)
 
         # this doesn't match any of the defined applications and should return
         # a 404

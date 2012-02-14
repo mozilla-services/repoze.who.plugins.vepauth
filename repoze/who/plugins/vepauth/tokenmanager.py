@@ -17,10 +17,10 @@ from repoze.who.plugins.vepauth.utils import strings_differ
 
 
 class TokenManager(object):
-    """Interface definition for management of OAuth tokens.
+    """Interface definition for management of MAC tokens.
 
     This class defines the necessary methods for managing tokens as part
-    of 2-legged OAuth signing:
+    of MAC request signing:
 
         * make_token:     create a new (token, secret) pair
         * parse_token:    extract (data, secret) from a given token
@@ -58,7 +58,7 @@ class TokenManager(object):
 
 
 class SignedTokenManager(object):
-    """Class managing signed OAuth tokens.
+    """Class managing signed MAC auth tokens.
 
     This class provides a TokenManager implementation based on signed
     timestamped tokens.  It should provide a good balance between speed,

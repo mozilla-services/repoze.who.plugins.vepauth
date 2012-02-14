@@ -43,12 +43,10 @@ import vep
 from vep.utils import get_assertion_info
 
 from repoze.who.plugins.vepauth.tokenmanager import SignedTokenManager
+from repoze.who.plugins.vepauth.noncemanager import NonceManager
 from repoze.who.plugins.vepauth.utils import (strings_differ,
                                               parse_authz_header,
-                                              NonceCache,
-                                              get_signature,
-                                              get_signature_base_string,
-                                              decode_oauth_parameter)
+                                              check_mac_signature)
 
 
 class VEPAuthPlugin(object):
@@ -57,7 +55,7 @@ class VEPAuthPlugin(object):
     This class provides an IIdentifier, IChallenger and IAuthenticator
     implementation of repoze.who.  Authentication is based on exchanging
     a VEP assertion for a short-lived session token, which is then used
-    to sign requests using two-legged OAuth.
+    to sign requests using HTTP MAC Authentication.
 
     The class takes different parameters when instanciated:
 
@@ -67,7 +65,7 @@ class VEPAuthPlugin(object):
     :param token_manager: the class to make and parse tokens
     :param verifier: the vep.verifiers verifier to use
     :param nonce_timeout: the timeout for the nonce (defaults to 5mn) which
-                          will be used in the oauth authentication flow
+                          will be used in the MAC authentication flow
 
     """
 
@@ -87,7 +85,7 @@ class VEPAuthPlugin(object):
         if verifier is None:
             verifier = vep.RemoteVerifier()
         if nonce_timeout is None:
-            nonce_timeout = 5 * 60
+            nonce_timeout = 60
         # Now we can initialize.
         self.audiences = audiences
         if audiences:
@@ -96,8 +94,12 @@ class VEPAuthPlugin(object):
         self.token_url = token_url
         self.token_manager = token_manager
         self.verifier = verifier
+        try:
+            token_timeout = token_manager.timeout
+        except AttributeError:
+            token_timeout = None
         self.nonce_timeout = nonce_timeout
-        self.nonce_cache = NonceCache(nonce_timeout)
+        self.nonce_manager = NonceManager(nonce_timeout, token_timeout)
 
     def identify(self, environ):
         """Extract the authentication info from the request.
@@ -107,19 +109,19 @@ class VEPAuthPlugin(object):
         environ["repoze.who.application"] so we can pass the token details
         back to the caller.
 
-        For all other URLs, we extract the OAuth params from the Authorization
+        For all other URLs, we extract the MAC params from the Authorization
         header and return those as the identity.
         """
         request = Request(environ)
         if self._is_request_to_token_url(request):
             return self._process_vep_assertion(request)
-        return self._identify_oauth(request)
+        return self._identify_mac(request)
 
     def remember(self, environ, identity):
         """Remember the user's identity.
 
         This is a no-op for this plugin; the client is supposed to remember
-        the provisioned OAuth credentials and re-use them for subsequent
+        the provisioned MAC credentials and re-use them for subsequent
         requests.
         """
         return []
@@ -130,7 +132,7 @@ class VEPAuthPlugin(object):
         This simply issues a new WWW-Authenticate challenge, which should
         cause the client to forget any previously-provisioned credentials.
         """
-        challenge = "OAuth+VEP url=\"%s\"" % (self.token_url,)
+        challenge = "MAC+BrowserID url=\"%s\"" % (self.token_url,)
         return [("WWW-Authenticate", challenge)]
 
     def challenge(self, environ, status, app_headers=(), forget_headers=()):
@@ -152,16 +154,16 @@ class VEPAuthPlugin(object):
     def authenticate(self, environ, identity):
         """Authenticate the extracted identity.
 
-        The identity must be a set of OAuth credentials extracted from
-        the request.  This method checks the OAuth signature, and if valid
+        The identity must be a set of MAC auth credentials extracted from
+        the request.  This method checks the MAC signature, and if valid
         extracts the user metadata from the token.
         """
         request = Request(environ)
         assert not self._is_request_to_token_url(request)
-        return self._authenticate_oauth(request, identity)
+        return self._authenticate_mac(request, identity)
 
     #
-    #  Methods for exchanging an assertion for an OAuth session token.
+    #  Methods for exchanging an assertion for a MAC session token.
     #
 
     def _process_vep_assertion(self, request):
@@ -214,15 +216,15 @@ class VEPAuthPlugin(object):
         resp.content_type = "application/json"
 
         body = {
-            "oauth_consumer_key": token,
-            "oauth_consumer_secret": secret,
+            "id": token,
+            "key": secret,
+            "algorithm": "hmac-sha-1",
         }
 
         if extra is not None:
             body.update(extra)
 
         resp.body = json.dumps(body)
-
         request.environ["repoze.who.application"] = resp
 
     def _check_audience(self, request, audience):
@@ -247,74 +249,67 @@ class VEPAuthPlugin(object):
         return re.compile(re_pattern)
 
     #
-    #  Methods for Two-Legged OAuth once the assertion has been verified.
+    #  Methods for MAC Authentication once the assertion has been verified.
     #
 
-    def _identify_oauth(self, request):
-        """Parse, validate and return the request's OAuth parameters.
+    def _identify_mac(self, request):
+        """Parse, validate and return the request's MAC parameters.
 
-        This method grabs the OAuth credentials from the Authorization header
+        This method grabs the MAC credentials from the Authorization header
         and performs some sanity-checks.  If the credentials are missing or
         malformed then it returns None; if they're ok then they are returned
         in a dict.
 
-        Note that this method does *not* validate the OAuth signature.
+        Note that this method does *not* validate the MAC signature.
         """
         params = parse_authz_header(request, None)
         if params is None:
             return None
-        if params.get("scheme") != "OAuth":
+        if params.get("scheme") != "MAC":
             return None
-        for key, value in params.iteritems():
-            params[key] = decode_oauth_parameter(value)
         # Check that various parameters are as expected.
-        if params.get("oauth_signature_method") != "HMAC-SHA1":
-            msg = "unsupported OAuth signature method"
+        token = params.get("id")
+        if token is None:
+            msg = "missing MAC id"
             return self._respond_unauthorized(request, msg)
-        if "oauth_consumer_key" not in params:
-            msg = "missing oauth_consumer_key"
-            return self._respond_unauthorized(request, msg)
-        # Check the timestamp, reject if too far from current time.
+        # Check the timestamp and nonce for freshness or reuse.
+        # TODO: the spec requires us to adjust for per-client clock skew.
         try:
-            timestamp = int(params["oauth_timestamp"])
+            timestamp = int(params["ts"])
         except (KeyError, ValueError):
-            msg = "missing or malformed oauth_timestamp"
+            msg = "missing or malformed MAC timestamp"
             return self._respond_unauthorized(request, msg)
-        if abs(timestamp - time.time()) >= self.nonce_timeout:
-            msg = "oauth_timestamp is not within accepted range"
-            return self._respond_unauthorized(request, msg)
-        # Check that the nonce is not being re-used.
-        nonce = params.get("oauth_nonce")
+        nonce = params.get("nonce")
         if nonce is None:
-            msg = "missing oauth_nonce"
+            msg = "missing MAC nonce"
             return self._respond_unauthorized(request, msg)
-        if nonce in self.nonce_cache:
-            msg = "oauth_nonce has already been used"
+        if not self.nonce_manager.is_fresh(token, timestamp, nonce):
+            msg = "MAC has stale token or nonce"
             return self._respond_unauthorized(request, msg)
-        # OK, they seem like sensible OAuth paramters.
+        # OK, they seem like sensible MAC paramters.
         return params
 
-    def _authenticate_oauth(self, request, identity):
-        # We can only authenticate if it has a valid oauth token.
-        token = identity.get("oauth_consumer_key")
-        if not token:
+    def _authenticate_mac(self, request, identity):
+        # Check that these are MAC auth credentials.
+        # They may not be if we're using multiple auth methods.
+        if identity.get("scheme") != "MAC":
             return None
+        token = identity["id"]
+        # Decode the token.
         try:
             data, secret = self.token_manager.parse_token(token)
         except ValueError:
-            msg = "invalid oauth_consumer_key"
+            msg = "invalid MAC id"
             return self._respond_unauthorized(request, msg)
-        # Check the two-legged OAuth signature.
-        sigdata = get_signature_base_string(request, identity)
-        expected_sig = get_signature(sigdata, secret)
-        if strings_differ(identity["oauth_signature"], expected_sig):
-            msg = "invalid oauth_signature"
+        # Check the MAC signature.
+        if not check_mac_signature(request, secret, identity):
+            msg = "invalid MAC signature"
             return self._respond_unauthorized(request, msg)
-        # Cache the nonce to avoid re-use.
+        # Store the nonce to avoid re-use.
         # We do this *after* successul auth to avoid DOS attacks.
-        nonce = identity["oauth_nonce"]
-        timestamp = int(identity["oauth_timestamp"])
-        self.nonce_cache.add(nonce, timestamp)
+        nonce = identity["nonce"]
+        timestamp = int(identity["ts"])
+        self.nonce_manager.add_nonce(token, timestamp, nonce)
         # Update the identity with the data from the token.
         identity.update(data)
         return identity["repoze.who.userid"]

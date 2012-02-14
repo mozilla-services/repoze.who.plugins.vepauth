@@ -10,9 +10,6 @@ Helper functions for repoze.who.plugins.vepauth.
 import os
 import re
 import time
-import heapq
-import urllib
-import threading
 import hmac
 from hashlib import sha1
 from base64 import b64encode
@@ -110,161 +107,90 @@ def strings_differ(string1, string2):
     return invalid_bits != 0
 
 
-class NonceCache(object):
-    """Object for managing a short-lived cache of nonce values.
-
-    This class allow easy management of client-generated nonces.  It keeps
-    a set of seen nonce values so that they can be looked up quickly, and
-    a queue ordering them by timestamp so that they can be purged when
-    they expire.
-    """
-
-    def __init__(self, timeout=None):
-        if timeout is None:
-            timeout = 5 * 60
-        self.timeout = timeout
-        self.nonce_timestamps = {}
-        self.purge_lock = threading.Lock()
-        self.purge_queue = []
-
-    def __contains__(self, nonce):
-        """Check if the given nonce is in the cache."""
-        timestamp = self.nonce_timestamps.get(nonce)
-        if timestamp is None:
-            return False
-        if timestamp + self.timeout < time.time():
-            return False
-        return True
-
-    def __len__(self):
-        """Get the number of items currently in the cache."""
-        return len(self.nonce_timestamps)
-
-    def add(self, nonce, timestamp):
-        """Add the given nonce to the cache."""
-        with self.purge_lock:
-            # Purge a few expired nonces to make room.
-            # Don't purge *all* of them, since we don't want to pause too long.
-            purge_deadline = time.time() - self.timeout
-            try:
-                for _ in xrange(5):
-                    (old_timestamp, old_nonce) = self.purge_queue[0]
-                    if old_timestamp >= purge_deadline:
-                        break
-                    heapq.heappop(self.purge_queue)
-                    del self.nonce_timestamps[old_nonce]
-            except (IndexError, KeyError):
-                pass
-            # Add the new nonce into both queue and map.
-            heapq.heappush(self.purge_queue, (timestamp, nonce))
-            self.nonce_timestamps[nonce] = timestamp
-
-
-def sign_request(request, oauth_consumer_key, oauth_consumer_secret):
-    """Sign the given request using Two-Legged OAuth.
+def sign_request(request, token, secret):
+    """Sign the given request using MAC access authentication.
 
     This function implements the client-side request signing algorithm as
-    expected by the server, i.e. Two-Legged OAuth as described in Section 3
-    of RFC 5849.
+    expected by the server, i.e. MAC access authentication as defined by
+    RFC-TODO.
 
     It's not used by the repoze.who plugin itself, but is handy for testing
     purposes and possibly for python client libraries.
     """
-    if isinstance(oauth_consumer_key, unicode):
-        oauth_consumer_key = oauth_consumer_key.encode("ascii")
-    if isinstance(oauth_consumer_secret, unicode):
-        oauth_consumer_secret = oauth_consumer_secret.encode("ascii")
-    # Use OAuth params from the request if present.
+    if isinstance(token, unicode):
+        token = token.encode("ascii")
+    if isinstance(secret, unicode):
+        secret = secret.encode("ascii")
+    # Use MAC parameters from the request if present.
     # Otherwise generate some fresh ones.
     params = parse_authz_header(request, {})
-    if params and params.pop("scheme") != "OAuth":
+    if params and params.pop("scheme") != "MAC":
         params.clear()
-    params["oauth_consumer_key"] = oauth_consumer_key
-    params["oauth_signature_method"] = "HMAC-SHA1"
-    params["oauth_version"] = "1.0"
-    if "oauth_timestamp" not in params:
-        params["oauth_timestamp"] = str(int(time.time()))
-    if "oauth_nonce" not in params:
-        params["oauth_nonce"] = os.urandom(5).encode("hex")
+    params["id"] = token
+    if "ts" not in params:
+        params["ts"] = str(int(time.time()))
+    if "nonce" not in params:
+        params["nonce"] = os.urandom(5).encode("hex")
     # Calculate the signature and add it to the parameters.
-    sigstr = get_signature_base_string(request, params)
-    params["oauth_signature"] = get_signature(sigstr, oauth_consumer_secret)
+    params["mac"] = get_mac_signature(request, secret, params)
     # Serialize the parameters back into the authz header.
     # WebOb has logic to do this that's not perfect, but good enough for us.
-    request.authorization = ("OAuth", params)
+    request.authorization = ("MAC", params)
 
 
-def get_signature(sigdata, secret):
-    """Get the OAuth signature for the given data, using the given secret.
-
-    This is straight from Section 3.4 of RFC-5849, using the HMAC-SHA1
-    signature method.
-    """
-    key = encode_oauth_parameter(secret) + "&"
-    return b64encode(hmac.new(key, sigdata, sha1).digest())
+def get_mac_signature(request, secret, params=None):
+    """Get the MAC signature for the given data, using the given secret."""
+    if params is None:
+        params = parse_authz_header(request, {})
+    sigstr = get_normalized_request_string(request, params)
+    return b64encode(hmac.new(secret, sigstr, sha1).digest())
 
 
-def get_signature_base_string(request, authz=None):
-    """Get the base string to be signed for OAuth authentication.
+def get_normalized_request_string(request, params=None):
+    """Get the string to be signed for MAC access authentication.
 
     This method takes a WebOb Request object and returns the data that
-    should be signed for OAuth authentication of that request, a.k.a the
-    "signature base string" as defined in section 3.4.1 of RFC-5849.
+    should be signed for MAC access authentication of that request, a.k.a
+    the "normalized request string" as defined in section 3.2.1 of RFC-TODO.
 
-    If the "authz" parameter is not None, it is assumed to be a pre-parsed
-    dict of parameters from the Authorization header.  If it is missing or
-    None then the Authorization header from the request will be parsed
-    directly.  This should only be used as an optimisation to avoid double
-    parsing of the header.
+    If the "params" parameter is not None, it is assumed to be a pre-parsed
+    dict of MAC parameters as one might find in the Authorization header.  If
+    it is missing or  None then the Authorization header from the request will
+    be parsed to determine the necessary parameters.
     """
-    # The signature base string contains three main components,
-    # percent-encoded and separated by an ampersand.
-    bits = [] 
-    # 1) The request method in upper-case.
+    if params is None:
+        params = parse_authz_header(request, {})
+    bits = []
+    bits.append(params["ts"])
+    bits.append(params["nonce"])
     bits.append(request.method.upper())
-    # 2) The base string URI.
-    # Fortunately WebOb's request.path_url gets us most of the way there.
-    # We just need to twiddle the scheme and host part to be in lowercase.
-    uri = request.path_url
-    host_len = len(request.host_url)
-    uri = uri[:host_len].lower() + uri[host_len:]
-    bits.append(uri)
-    # 3) The request parameters.
-    # Parameters can come from GET vars, POST vars, or the Authz header.
-    # We assume that WebOb has already put them in their decoded form.
-    params = request.GET.items()
-    if request.content_type == "application/x-www-form-urlencoded":
-        params.extend(request.POST.items())
-    if authz is None:
-        authz = parse_authz_header(request, {})
-    for item in authz.iteritems():
-        if item[0] not in ("scheme", "realm", "oauth_signature"):
-            params.append(item)
-    params = [(encode_oauth_parameter(k), encode_oauth_parameter(v))
-              for k, v in params]
-    params.sort()
-    bits.append("&".join("%s=%s" % (k, v) for k, v in params))
-    # Jow encode and join together the the components.
-    # Yes, this double-encodes the parameters.
-    # That's what the spec requires.
-    return "&".join(encode_oauth_parameter(bit) for bit in bits)
+    bits.append(request.path_qs)
+    try:
+        host, port = request.host.rsplit(":", 1)
+    except ValueError:
+        host = request.host
+        if request.scheme == "http":
+            port = "80"
+        elif request.scheme == "https":
+            port = "443"
+        else:
+            msg = "Unknown scheme %r has no default port" % (request.scheme,)
+            raise ValueError(msg)
+    bits.append(host.lower())
+    bits.append(port)
+    bits.append(params.get("ext", ""))
+    bits.append("") # to get the trailing newline
+    return "\n".join(bits)
 
 
-def encode_oauth_parameter(value):
-    """Percent-encode an oauth parameter name or value.
-
-    This encapsulates the fiddly definitions from Section 3.6 of RFC-5849,
-    to produce a consistent canonical escaped form for any string.
-    """
-    if isinstance(value, unicode):
-        value = value.encode("utf8")
-    return urllib.quote(value, safe="-._~")
-
-
-def decode_oauth_parameter(value):
-    """Percent-decode an oauth parameter name or value.
-
-    This encapsulates the fiddly definitions from Section 3.6 of RFC-5849,
-    to decode from the  consistent canonical escaped form of any string.
-    """
-    return urllib.unquote(value)
+def check_mac_signature(request, secret, params=None):
+    """Check that the request is correctly signed with the given secret."""
+    if params is None:
+        params = parse_authz_header(request, {})
+    # Any KeyError here indicates a missing parameter,
+    # which implies an invalid signature.
+    try:
+        expected_sig = get_mac_signature(request, secret, params)
+        return not strings_differ(params["mac"], expected_sig)
+    except KeyError:
+        return False
