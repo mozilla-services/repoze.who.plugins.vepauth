@@ -1,5 +1,5 @@
 
-0.2.0 - ????-??-??
+0.2.0 - 2012-02-14
 ==================
 
  * Added basic pattern-matching for the token_url, e.g. "/{app}/token".
