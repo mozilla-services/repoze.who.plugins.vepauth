@@ -43,11 +43,11 @@ class TestTokens(unittest2.TestCase):
         self.assertRaises(ValueError, manager.parse_token, token)
 
     def test_multiple_application_are_supported(self):
-        apps = ("foo", "bar", "baz")
+        apps = "foo-1.1,bar-2.0,baz-2.1"
         manager = SignedTokenManager(timeout=0.2, applications=apps)
 
         # this should work as we have an application specified
-        request = FakeRequest({"application": "foo"})
+        request = FakeRequest({"application": "foo", "version": "1.1"})
         token, secret, extra = manager.make_token(request, {"email": "tester"})
 
         # asking for an unknown application should raise a 404

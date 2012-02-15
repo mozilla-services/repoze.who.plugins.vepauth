@@ -29,7 +29,6 @@ __version__ = "%d.%d.%d%s" % __ver_tuple__
 
 import re
 import json
-import time
 import fnmatch
 
 from zope.interface import implements
@@ -44,8 +43,7 @@ from vep.utils import get_assertion_info
 
 from repoze.who.plugins.vepauth.tokenmanager import SignedTokenManager
 from repoze.who.plugins.vepauth.noncemanager import NonceManager
-from repoze.who.plugins.vepauth.utils import (strings_differ,
-                                              parse_authz_header,
+from repoze.who.plugins.vepauth.utils import (parse_authz_header,
                                               check_mac_signature)
 
 

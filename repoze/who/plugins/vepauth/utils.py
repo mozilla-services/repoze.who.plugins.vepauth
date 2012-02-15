@@ -179,7 +179,7 @@ def get_normalized_request_string(request, params=None):
     bits.append(host.lower())
     bits.append(port)
     bits.append(params.get("ext", ""))
-    bits.append("") # to get the trailing newline
+    bits.append("")     # to get the trailing newline
     return "\n".join(bits)
 
 
