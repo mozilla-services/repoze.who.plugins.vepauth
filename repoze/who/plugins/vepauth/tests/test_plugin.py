@@ -384,7 +384,7 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         self.assertEquals(self.plugin.authenticate(make_environ(), {}), None)
 
     def test_token_url_can_contain_placeholders(self):
-        self.plugin.token_url = "/{application}/{test}/foo"
+        self.plugin.token_url = "/{application}/{version}/{test}/foo"
 
         authz = "Browser-ID " + self._make_assertion("test@moz.com")
         headers = {"Authorization": authz}
@@ -394,19 +394,24 @@ class TestVEPAuthPlugin(unittest2.TestCase):
         self.assertTrue("id" not in r.body)
 
         # valid pattern should return a consumer key
-        r = self.app.get("/foo/bar/foo", headers=headers)
+        r = self.app.get("/foo/1.0/bar/foo", headers=headers)
         self.assertTrue("id" in r.body)
 
-        self.plugin.token_manager.applications = ("foo", "bar", "baz")
+        self.plugin.token_manager.applications = {"foo": ["1.0"],
+                                                  "bar": ["2.1"],
+                                                  "baz": ["1.2"]}
 
         # defining manually a set of applications an making a request for one
         # of them should work
-        r = self.app.get("/foo/bar/foo", headers=headers)
+        r = self.app.get("/foo/1.0/bar/foo", headers=headers)
         self.assertTrue("id" in r.body)
 
         # this doesn't match any of the defined applications and should return
         # a 404
-        self.assertRaises(HTTPNotFound, self.app.get, "/not_an_app/bar/foo",
+        self.assertRaises(HTTPNotFound, self.app.get, "/not_an_app/1.0/bar/foo",
+                headers=headers)
+        # bad version
+        self.assertRaises(HTTPNotFound, self.app.get, "/foo/1.4/bar/foo",
                 headers=headers)
 
     def test_extra_data_gets_added(self):

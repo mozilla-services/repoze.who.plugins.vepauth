@@ -10,6 +10,7 @@ import hmac
 import hashlib
 from base64 import urlsafe_b64encode as b64encode
 from base64 import urlsafe_b64decode as b64decode
+from collections import defaultdict
 
 from webob.exc import HTTPNotFound
 
@@ -79,8 +80,16 @@ class SignedTokenManager(object):
 
        * applications: If the request contains a matchdict with "application"
                        in it, it should be one of the ones provided by this
-                       option;
-                       if not specified then an empty list will be used (and
+                       option, which is a mapping. The request also needs
+                       to define a "version" for the application.
+
+                       An application is composed of a name and a version,
+                       like : sync-2.0.
+
+                       The mapping keys are the applicatin names, and the
+                       values are lists of versions.
+
+                       If not specified then an empty list will be used (and
                        all the applications will be considered valid)
     """
 
@@ -98,16 +107,26 @@ class SignedTokenManager(object):
         # Default timeout is five minutes.
         if timeout is None:
             timeout = 5 * 60
-        # Default list of applications is empty
-        if applications is None:
-            applications = ()
         self.secret = secret
         self._sig_secret = HKDF(self.secret, salt=None, info="SIGNING",
                                 size=digest_size)
         self.timeout = timeout
         self.hashmod = hashmod
         self.hashmod_digest_size = digest_size
-        self.applications = applications
+
+        # Default list of applications is empty
+        self.applications = defaultdict(list)
+
+        if applications is not None:
+            for element in applications.split(','):
+                element = element.strip()
+                if element == '':
+                    continue
+                element = element.split('-')
+                if len(element) != 2:
+                    continue
+                app, version = element
+                self.applications[app].append(version)
 
     def make_token(self, request, data):
         """Generate a new token for the given userid.
@@ -168,16 +187,26 @@ class SignedTokenManager(object):
         If the matchdict contains "application", checks that application is one
         of the defined ones in self.applications.
 
-        This method is to be overwritted by potential cihlds of this class, for
+        This method is to be overwritted by potential childs of this class, for
         e.g looking the list of possible application choices in a database.
 
         It is up to this method to return the appropriate HTTP exceptions (e.g
         a 404 if it is found that the requested url does not exist)
         """
-        if ('application' in request.matchdict and self.applications and
-                request.matchdict['application'] not in self.applications):
-            raise HTTPNotFound("The '%s' application does not exist" %
-                    request.matchdict['application'])
+        if self.applications == {}:
+            return
+
+        application = request.matchdict.get('application')
+        version = request.matchdict.get('version')
+
+        if application not in self.applications:
+            raise HTTPNotFound("The %r application does not exist" % \
+                                application)
+
+        if version not in self.applications[application]:
+            raise HTTPNotFound(("The %r application version does not "
+                                "exist at version %r") % (application,
+                                                          version))
 
     def _get_secret(self, token, data):
         """Get the secret key associated with the given token.
