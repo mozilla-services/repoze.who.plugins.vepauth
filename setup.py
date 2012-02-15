@@ -13,7 +13,7 @@ with open(os.path.join(here, 'CHANGES.txt')) as f:
 requires = ['repoze.who >= 2.0', 'unittest2', 'webtest', 'PyVEP >= 0.3.0']
 
 setup(name='repoze.who.plugins.vepauth',
-      version='0.2.0',
+      version='0.3.0',
       description='repoze.who.plugins.vepauth',
       long_description=README + '\n\n' + CHANGES,
       classifiers=[

@@ -1,3 +1,11 @@
+0.3.0 - 2012-02-14
+==================
+
+ * Replaced Two-Legged OAuth with MAC Access Auth, implemented according
+   to the latest draft standard:
+
+      https://tools.ietf.org/html/draft-ietf-oauth-v2-http-mac-01
+
 
 0.2.0 - 2012-02-14
 ==================
