@@ -408,8 +408,8 @@ class TestVEPAuthPlugin(unittest2.TestCase):
 
         # this doesn't match any of the defined applications and should return
         # a 404
-        self.assertRaises(HTTPNotFound, self.app.get, "/not_an_app/1.0/bar/foo",
-                headers=headers)
+        self.assertRaises(HTTPNotFound, self.app.get,
+                          "/not_an_app/1.0/bar/foo", headers=headers)
         # bad version
         self.assertRaises(HTTPNotFound, self.app.get, "/foo/1.4/bar/foo",
                 headers=headers)

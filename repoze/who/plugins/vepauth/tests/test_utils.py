@@ -3,16 +3,13 @@
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import unittest2
-import time
-import json
-import base64
 
 from webob import Request
 
 from repoze.who.plugins.vepauth.utils import (strings_differ,
                                               parse_authz_header,
                                               sign_request,
-                                              get_mac_signature,
+                                              #get_mac_signature,
                                               check_mac_signature,
                                               get_normalized_request_string)
 
@@ -145,7 +142,7 @@ class TestUtils(unittest2.TestCase):
         req = "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
         req = Request.from_string(req)
         req.authorization = ("MAC", {"ts": "1", "nonce": "2"})
-        sigstr = "1\n2\nGET\n/\nexample.com\n443\n\n"
+        #sigstr = "1\n2\nGET\n/\nexample.com\n443\n\n"
         req.scheme = "httptypo"
         self.assertRaises(ValueError, get_normalized_request_string, req)
 
@@ -153,6 +150,6 @@ class TestUtils(unittest2.TestCase):
         req = "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
         req = Request.from_string(req)
         req.authorization = ("MAC", {"ts": "1", "nonce": "2"})
-        sigstr = get_normalized_request_string(req)
-        sig = get_mac_signature(req, "secretkeyohsecretkey")
+        #sigstr = get_normalized_request_string(req)
+        #sig = get_mac_signature(req, "secretkeyohsecretkey")
         self.assertFalse(check_mac_signature(req, "secretkeyohsecretkey"))
