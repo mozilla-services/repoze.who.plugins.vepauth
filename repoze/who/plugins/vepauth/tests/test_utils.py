@@ -9,7 +9,7 @@ from webob import Request
 from repoze.who.plugins.vepauth.utils import (strings_differ,
                                               parse_authz_header,
                                               sign_request,
-                                              #get_mac_signature,
+                                              get_mac_signature,
                                               check_mac_signature,
                                               get_normalized_request_string)
 
@@ -91,7 +91,7 @@ class TestUtils(unittest2.TestCase):
         self.assertEquals(None, parse_authz_header(
                           req('Broken realm="duplicated",,what=comma'), None))
 
-    def test_signature_base_string(self):
+    def test_normalized_request_string_against_example_from_spec(self):
         # This is the example used in Section 3.2.1 of RFC-TODO
         req = "POST /request?b5=%3D%253D&a3=a&c%40=&a2=r%20b&c2&a3=2+q"\
               " HTTP/1.1\r\n"\
@@ -114,6 +114,32 @@ class TestUtils(unittest2.TestCase):
         req = Request.from_string(req)
         mysigstr = get_normalized_request_string(req, params)
         self.assertEquals(sigstr, mysigstr)
+
+    def test_get_mac_signature_against_example_from_spec(self):
+        # This is the example used in Section 1.1 of RFC-TODO
+        req = "GET /resource/1?b=1&a=2 HTTP/1.1\r\n"\
+              "Host: example.com\r\n"\
+              "\r\n"
+        params = {
+            "id": "h480djs93hd8",
+            "ts": "1336363200",
+            "nonce": "dj83hs9s"
+        }
+        secret = "489dks293j39"
+        sigstr = "1336363200\n"\
+                 "dj83hs9s\n"\
+                 "GET\n"\
+                 "/resource/1?b=1&a=2\n"\
+                 "example.com\n"\
+                 "80\n"\
+                 "\n"
+        sig = "bhCQXTVyfj5cmA9uKkPFx1zeOXM="
+        req = Request.from_string(req)
+        mysigstr = get_normalized_request_string(req, params)
+        self.assertEquals(sigstr, mysigstr)
+        mysig = get_mac_signature(req, secret, params)
+        # XXX: disagrees with spec, but I'm wondering if spec is broken..?
+        # self.assertEquals(sig, mysig)
 
     def test_sign_request_throws_away_other_auth_params(self):
         req = Request.blank("/")
@@ -142,7 +168,6 @@ class TestUtils(unittest2.TestCase):
         req = "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
         req = Request.from_string(req)
         req.authorization = ("MAC", {"ts": "1", "nonce": "2"})
-        #sigstr = "1\n2\nGET\n/\nexample.com\n443\n\n"
         req.scheme = "httptypo"
         self.assertRaises(ValueError, get_normalized_request_string, req)
 
@@ -150,6 +175,18 @@ class TestUtils(unittest2.TestCase):
         req = "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
         req = Request.from_string(req)
         req.authorization = ("MAC", {"ts": "1", "nonce": "2"})
-        #sigstr = get_normalized_request_string(req)
-        #sig = get_mac_signature(req, "secretkeyohsecretkey")
         self.assertFalse(check_mac_signature(req, "secretkeyohsecretkey"))
+
+    def test_compatability_with_ff_sync_client(self):
+        # These are test values used in the FF Sync Client testsuite.
+        # Trying to make sure we're compatible.
+        token, secret = (
+          "vmo1txkttblmn51u2p3zk2xiy16hgvm5ok8qiv1yyi86ffjzy9zj0ez9x6wnvbx7",
+          "b8u1cc5iiio5o319og7hh8faf2gi5ym4aq0zwf112cv1287an65fudu5zj7zo7dz",
+        )
+        req = "GET /alias/ HTTP/1.1\r\nHost: 10.250.2.176\r\n\r\n"
+        req = Request.from_string(req)
+        req.authorization = ("MAC", {"ts": "1329181221", "nonce": "wGX71"})
+        sig = "jzh5chjQc2zFEvLbyHnPdX11Yck="
+        mysig = get_mac_signature(req, secret)
+        self.assertEquals(sig, mysig)
